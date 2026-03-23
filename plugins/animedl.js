@@ -7,25 +7,22 @@ const ffmpeg = require('fluent-ffmpeg');
 const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
+// ඔයා ඉල්ලපු අලුත් Assistant Olya ෆූටර් එක
 const formatMsg = (title, body) =>
-    `✦ ━━━━━━━━━━━━━━━ ✦\n${title}\n\n${body}\n✦ ━━━━━━━━━━━━━━━ ✦\n> 𝓓𝓮𝔁𝓮𝓻 𝓜𝓓 𝓐𝓼𝓼𝓲𝓼𝓽𝓪𝓷𝓽 💞🐝`;
+    `✦ ━━━━━━━━━━━━━━━ ✦\n${title}\n\n${body}\n✦ ━━━━━━━━━━━━━━━ ✦\n> 𝓐𝓼𝓼𝓲𝓼𝓽𝓪𝓷𝓽 𝓞𝓵𝔂𝓪 💞🐝`;
 
 // =============================================
-// PROVIDER LIST (fallback order) - UPDATED
+// PROVIDER LIST (fallback order)
 // =============================================
 const PROVIDERS = {
     gogoanime: () => new ANIME.Gogoanime(),
-    zoro: () => new ANIME.Zoro(),
-    enime: () => new ANIME.Enime(),
-    animefox: () => new ANIME.AnimeFox()
+    zoro: () => new ANIME.Zoro()
 };
 
-// Default browser-like axios instance
 const http = axios.create({
     timeout: 20000,
     headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Accept-Language': 'en-US,en;q=0.9',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     }
 });
 
@@ -37,7 +34,6 @@ async function searchWithFallback(query) {
     let lastErr = null;
     for (const name of providerNames) {
         try {
-            console.log(`[Search] Trying provider: ${name}`);
             const provider = PROVIDERS[name]();
             const res = await provider.search(query);
             if (res?.results?.length > 0) {
@@ -48,7 +44,7 @@ async function searchWithFallback(query) {
             lastErr = e;
         }
     }
-    throw lastErr || new Error('All providers failed to return search results.');
+    throw lastErr || new Error('All providers failed');
 }
 
 // =============================================
@@ -61,7 +57,6 @@ async function fetchInfoWithFallback(animeId, providerName) {
     let lastErr = null;
     for (const name of names) {
         try {
-            console.log(`[Info] Trying provider: ${name}`);
             const provider = PROVIDERS[name]();
             const info = await provider.fetchAnimeInfo(animeId);
             if (info?.episodes?.length > 0) return { info, providerName: name, provider };
@@ -70,7 +65,7 @@ async function fetchInfoWithFallback(animeId, providerName) {
             lastErr = e;
         }
     }
-    throw lastErr || new Error('Info fetch failed on all available providers.');
+    throw lastErr || new Error('Info fetch failed');
 }
 
 // =============================================
@@ -99,7 +94,6 @@ function selectBestSource(sources) {
 // =============================================
 function convertToMP4(streamUrl, outputPath, referer) {
     return new Promise((resolve, reject) => {
-        console.log('Starting FFmpeg for:', streamUrl.substring(0, 80));
         ffmpeg(streamUrl)
             .inputOptions([
                 '-headers',
@@ -112,14 +106,8 @@ function convertToMP4(streamUrl, outputPath, referer) {
                 '-movflags +faststart',
             ])
             .output(outputPath)
-            .on('progress', p => {
-                if (p.percent) process.stdout.write(`\rConvert: ${Math.floor(p.percent)}%`);
-            })
-            .on('end', () => { console.log('\nFFmpeg done.'); resolve(true); })
-            .on('error', (err, stdout, stderr) => {
-                console.error('\nFFmpeg failed:', err.message);
-                reject(err);
-            })
+            .on('end', () => resolve(true))
+            .on('error', (err) => reject(err))
             .run();
     });
 }
@@ -135,8 +123,7 @@ cmd({
 },
 async (hansaka, mek, m, { from, q, reply }) => {
     try {
-        if (!q) return reply(formatMsg("🔴 *Input Error*",
-            "🤖 Anime නම ලිවීමේ ආකාරය:\n*.animevid Naruto*"));
+        if (!q) return reply(formatMsg("🔴 *Input Error*", "🤖 Anime නම ලිවීමේ ආකාරය:\n*.animevid Naruto*"));
 
         await hansaka.sendMessage(from, { react: { text: "🔍", key: mek.key } });
         await reply(formatMsg("🔍 *Searching...*", `"${q}" සොයමින් පවතී...⏳`));
@@ -145,16 +132,13 @@ async (hansaka, mek, m, { from, q, reply }) => {
         try {
             searchResult = await searchWithFallback(q);
         } catch (e) {
-            console.error('All search providers failed:', e.message);
-            return reply(formatMsg("🔴 *Server Error*",
-                `Anime server access කිරීමට නොහැකි විය.\n\n*Error:* ${e.message}\n\n` +
-                `⚠️ කරුණාකර සුළු මොහොතකින් නැවත උත්සාහ කරන්න.`));
+            return reply(formatMsg("🔴 *Server Error*", 
+                `Anime සෙවීමේදී දෝෂයක් ඇතිවිය.\n*Error:* ${e.message}\n\n⚠️ Package එක update කර නැවත උත්සාහ කරන්න.`));
         }
 
         const anime = searchResult.results[0];
         const providerName = searchResult.providerName;
 
-        // Fetch total episode count (optional)
         let totalEp = "?";
         try {
             const { info } = await fetchInfoWithFallback(anime.id, providerName);
@@ -166,8 +150,7 @@ async (hansaka, mek, m, { from, q, reply }) => {
             `📺 *Total Episodes:* ${totalEp}\n` +
             `🌐 *Provider:* ${providerName}\n\n` +
             `👇 Download කිරීමට, *මේ message* reply කරලා:\n` +
-            `*.ep 1* → Episode 1\n` +
-            `*.ep 5* → Episode 5\n\n` +
+            `*.ep 1* → Episode 1\n\n` +
             `> 📌 *ANID:* ${anime.id}|${providerName}`;
 
         try {
@@ -178,11 +161,9 @@ async (hansaka, mek, m, { from, q, reply }) => {
         } catch (_) {
             await reply(formatMsg("✅ *Anime Found!*", body));
         }
-
         await hansaka.sendMessage(from, { react: { text: "✅", key: mek.key } });
 
     } catch (e) {
-        console.error("AnimeDL Search crash:", e);
         reply(formatMsg("🔴 *Error*", e.message));
     }
 });
@@ -192,96 +173,66 @@ async (hansaka, mek, m, { from, q, reply }) => {
 // =============================================
 cmd({
     pattern: "ep",
-    desc: "Download Anime Episode (reply to animevid result)",
+    desc: "Download Anime Episode",
     category: "downloader",
     filename: __filename
 },
 async (hansaka, mek, m, { from, q, reply }) => {
     try {
-        if (!q) return reply(formatMsg("🔴 *Input Error*",
-            "Episode number ලිවීමේ ආකාරය:\n*.ep 1*"));
+        if (!q) return reply(formatMsg("🔴 *Input Error*", "Episode number ලිවීමේ ආකාරය:\n*.ep 1*"));
 
         const epNumber = parseInt(q.trim());
-        if (isNaN(epNumber) || epNumber < 1)
-            return reply(formatMsg("🔴 *Input Error*", "නිවැරදි episode number: *.ep 1*"));
+        if (isNaN(epNumber) || epNumber < 1) return reply(formatMsg("🔴 *Input Error*", "නිවැරදි episode number: *.ep 1*"));
 
-        if (!m.quoted)
-            return reply(formatMsg("🔴 *Action Required*",
-                "*.animevid* result message reply කරලා *.ep* ගහන්න!"));
+        if (!m.quoted) return reply(formatMsg("🔴 *Action Required*", "*.animevid* result message reply කරලා *.ep* ගහන්න!"));
 
-        // Extract quoted text
         let rawText = m.quoted.text || m.quoted.caption || "";
         if (!rawText) {
             try {
-                rawText = mek.message?.extendedTextMessage
-                    ?.contextInfo?.quotedMessage?.imageMessage?.caption || "";
+                rawText = mek.message?.extendedTextMessage?.contextInfo?.quotedMessage?.imageMessage?.caption || "";
             } catch (_) {}
         }
         rawText = String(rawText);
 
-        // Extract ANID: animeId|providerName
         const anidMatch = rawText.match(/ANID:\s*([^\s|]+)\|([a-z]+)/i);
-        if (!anidMatch) {
-            return reply(formatMsg("🔴 *ID Error*",
-                "Anime ID හොයාගන්න බැරිවුණා.\nආයෙත් *.animevid* ගහලා ලැබෙන message reply කරන්න."));
-        }
+        if (!anidMatch) return reply(formatMsg("🔴 *ID Error*", "Anime ID හොයාගන්න බැරිවුණා. ආයෙත් *.animevid* ගහන්න."));
 
         const animeId = anidMatch[1].trim();
         const providerName = anidMatch[2].toLowerCase();
 
         await hansaka.sendMessage(from, { react: { text: "📥", key: mek.key } });
-        await reply(formatMsg("📋 *Loading Episode List*",
-            `Episode ${epNumber} info ලොඩ් කරමින්...\n*ID:* ${animeId}\n*Provider:* ${providerName}`));
+        await reply(formatMsg("📋 *Loading Episode*", `Episode ${epNumber} ලොඩ් කරමින්...`));
 
-        // Anime info
         let animeInfo, provider;
         try {
             const result = await fetchInfoWithFallback(animeId, providerName);
             animeInfo = result.info;
             provider = result.provider;
         } catch (e) {
-            return reply(formatMsg("🔴 *Network Error*",
-                `Anime info ලබාගත නොහැකිය:\n${e.message}`));
+            return reply(formatMsg("🔴 *Network Error*", e.message));
         }
-
-        if (!animeInfo?.episodes?.length)
-            return reply(formatMsg("🔴 *Error*", "Episodes list හමු නොවීය."));
 
         const epObj = animeInfo.episodes.find(e => e.number === epNumber);
-        if (!epObj) {
-            const last = animeInfo.episodes[animeInfo.episodes.length - 1]?.number;
-            return reply(formatMsg("🔴 *Not Found*",
-                `Episode ${epNumber} නිකුත් නොවීය.\n📺 Available: 1 - ${last}`));
-        }
+        if (!epObj) return reply(formatMsg("🔴 *Not Found*", `Episode ${epNumber} නිකුත් නොවීය.`));
 
-        await reply(formatMsg("🔗 *Getting Stream URL*",
-            `Episode ${epNumber} stream link ලබාගනිමින්...`));
+        await reply(formatMsg("🔗 *Getting Stream URL*", `Stream link ලබාගනිමින්...`));
 
-        // Sources
         let sources;
         try {
             sources = await fetchSources(provider, epObj.id);
         } catch (e) {
-            return reply(formatMsg("🔴 *Stream Error*",
-                `Stream links ලබාගත නොහැකිය:\n${e.message}`));
+            return reply(formatMsg("🔴 *Stream Error*", e.message));
         }
 
-        if (!sources?.length)
-            return reply(formatMsg("🔴 *Error*", "Stream links හමු නොවීය."));
-
         const best = selectBestSource(sources);
-        if (!best?.url)
-            return reply(formatMsg("🔴 *Error*", "නිවැරදි stream URL නෑ."));
+        if (!best?.url) return reply(formatMsg("🔴 *Error*", "නිවැරදි stream URL නෑ."));
 
         const quality = best.quality || "HD";
         const streamUrl = best.url;
 
         await hansaka.sendMessage(from, { react: { text: "⏳", key: mek.key } });
-        await reply(formatMsg("🔄 *Downloading & Converting*",
-            `🎬 *Quality:* ${quality}\n📡 *Stream URL ලැබුණා!*\n\n` +
-            `Video convert කරමින් පවතී...\n⏳ *2-10 minutes* ගත විය හැකිය.`));
+        await reply(formatMsg("🔄 *Downloading*", `🎬 Quality: ${quality}\nVideo convert කරමින් පවතී... ⏳`));
 
-        // File paths
         const dataDir = path.join(__dirname, '..', 'data');
         if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
@@ -289,30 +240,22 @@ async (hansaka, mek, m, { from, q, reply }) => {
         const fileName = `ep_${safeId}_${epNumber}_${Date.now()}.mp4`;
         const filePath = path.join(dataDir, fileName);
 
-        // Convert
         try {
-            // Updated referer for Gogoanime fallback
             await convertToMP4(streamUrl, filePath, 'https://gogoanime3.co/');
         } catch (ffErr) {
             if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-            return reply(formatMsg("🔴 *Convert Error*",
-                `FFmpeg error:\n${ffErr.message}`));
+            return reply(formatMsg("🔴 *Convert Error*", ffErr.message));
         }
-
-        if (!fs.existsSync(filePath))
-            return reply(formatMsg("🔴 *File Error*", "Video file create නොවීය."));
 
         const fileSize = fs.statSync(filePath).size;
         const sizeMB = (fileSize / (1024 * 1024)).toFixed(2);
 
         if (fileSize > 99 * 1024 * 1024) {
             fs.unlinkSync(filePath);
-            return reply(formatMsg("🔴 *Too Large*",
-                `File size ${sizeMB}MB - WhatsApp 100MB limit ඉක්මවාය.`));
+            return reply(formatMsg("🔴 *Too Large*", `File size ${sizeMB}MB - WhatsApp 100MB limit ඉක්මවාය.`));
         }
 
-        await reply(formatMsg("📤 *Uploading*",
-            `✅ Convert සාර්ථකයි! (${sizeMB} MB)\nWhatsApp වෙත upload කරමින්...`));
+        await reply(formatMsg("📤 *Uploading*", `✅ Convert සාර්ථකයි! (${sizeMB} MB)`));
 
         try {
             const buf = fs.readFileSync(filePath);
@@ -320,12 +263,8 @@ async (hansaka, mek, m, { from, q, reply }) => {
                 document: buf,
                 mimetype: "video/mp4",
                 fileName: `Anime_EP${epNumber}_${quality}.mp4`,
-                caption: formatMsg(
-                    `🎬 *Episode ${epNumber}* | ${quality}`,
-                    `✅ Download සාර්ථකයි!\n📁 Size: ${sizeMB} MB\n🌐 Provider: ${providerName}`
-                )
+                caption: formatMsg(`🎬 *Episode ${epNumber}*`, `✅ Download සාර්ථකයි!\n📁 Size: ${sizeMB} MB`)
             }, { quoted: mek });
-
             await hansaka.sendMessage(from, { react: { text: "✅", key: mek.key } });
         } catch (sendErr) {
             reply(formatMsg("🔴 *Upload Error*", sendErr.message));
@@ -334,7 +273,6 @@ async (hansaka, mek, m, { from, q, reply }) => {
         }
 
     } catch (e) {
-        console.error("EP Download crash:", e);
         reply(formatMsg("🔴 *Error*", e.message));
     }
 });
