@@ -11,11 +11,13 @@ const formatMsg = (title, body) =>
     `✦ ━━━━━━━━━━━━━━━ ✦\n${title}\n\n${body}\n✦ ━━━━━━━━━━━━━━━ ✦\n> 𝓓𝓮𝔁𝓮𝓻 𝓜𝓓 𝓐𝓼𝓼𝓲𝓼𝓽𝓪𝓷𝓽 💞🐝`;
 
 // =============================================
-// PROVIDER LIST (fallback order)
+// PROVIDER LIST (fallback order) - UPDATED
 // =============================================
 const PROVIDERS = {
     gogoanime: () => new ANIME.Gogoanime(),
     zoro: () => new ANIME.Zoro(),
+    enime: () => new ANIME.Enime(),
+    animefox: () => new ANIME.AnimeFox()
 };
 
 // Default browser-like axios instance
@@ -35,6 +37,7 @@ async function searchWithFallback(query) {
     let lastErr = null;
     for (const name of providerNames) {
         try {
+            console.log(`[Search] Trying provider: ${name}`);
             const provider = PROVIDERS[name]();
             const res = await provider.search(query);
             if (res?.results?.length > 0) {
@@ -45,7 +48,7 @@ async function searchWithFallback(query) {
             lastErr = e;
         }
     }
-    throw lastErr || new Error('All providers failed');
+    throw lastErr || new Error('All providers failed to return search results.');
 }
 
 // =============================================
@@ -58,6 +61,7 @@ async function fetchInfoWithFallback(animeId, providerName) {
     let lastErr = null;
     for (const name of names) {
         try {
+            console.log(`[Info] Trying provider: ${name}`);
             const provider = PROVIDERS[name]();
             const info = await provider.fetchAnimeInfo(animeId);
             if (info?.episodes?.length > 0) return { info, providerName: name, provider };
@@ -66,7 +70,7 @@ async function fetchInfoWithFallback(animeId, providerName) {
             lastErr = e;
         }
     }
-    throw lastErr || new Error('Info fetch failed on all providers');
+    throw lastErr || new Error('Info fetch failed on all available providers.');
 }
 
 // =============================================
@@ -144,8 +148,7 @@ async (hansaka, mek, m, { from, q, reply }) => {
             console.error('All search providers failed:', e.message);
             return reply(formatMsg("🔴 *Server Error*",
                 `Anime server access කිරීමට නොහැකි විය.\n\n*Error:* ${e.message}\n\n` +
-                `⚠️ Bot server (Heroku/Railway) network issue - Local machine scraping support නෑ.\n` +
-                `Bot cloud server deploy කරන්න.`));
+                `⚠️ කරුණාකර සුළු මොහොතකින් නැවත උත්සාහ කරන්න.`));
         }
 
         const anime = searchResult.results[0];
@@ -186,7 +189,6 @@ async (hansaka, mek, m, { from, q, reply }) => {
 
 // =============================================
 // 2. DOWNLOAD COMMAND: .ep <number>
-//    (reply to .animevid search result)
 // =============================================
 cmd({
     pattern: "ep",
@@ -289,6 +291,7 @@ async (hansaka, mek, m, { from, q, reply }) => {
 
         // Convert
         try {
+            // Updated referer for Gogoanime fallback
             await convertToMP4(streamUrl, filePath, 'https://gogoanime3.co/');
         } catch (ffErr) {
             if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
