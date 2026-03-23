@@ -28,9 +28,9 @@ const getAnimeImg = () => {
     } catch (e) { return null; }
 };
 
-// Safe String Converter 🛠️
+// Safe String Converter (වැදගත්ම කොටස! 🛠️)
 const safeStr = (val) => {
-    if (!val) return "N/A";
+    if (val === null || val === undefined) return "N/A";
     if (typeof val === 'object') return val.english || val.romaji || val.userPreferred || JSON.stringify(val);
     return String(val);
 };
@@ -90,13 +90,17 @@ async (hansaka, mek, m, { from, q, reply }) => {
             return reply(formatMsg("🔴 *Not Found*", "සොයන නමට අදාළ කිසිවක් හමු නොවීය."));
         }
 
-        let buttons = results.slice(0, 5).map(res => ({
-            name: 'quick_reply',
-            buttonParamsJson: JSON.stringify({ 
-                display_text: safeStr(res.title).substring(0, 20), 
-                id: `.ainfo ${res.id}` 
-            })
-        }));
+        let buttons = results.slice(0, 5).map(res => {
+            if (!res) return null;
+            const titleText = safeStr(res.title || res.name || "Anime");
+            return {
+                name: 'quick_reply',
+                buttonParamsJson: JSON.stringify({ 
+                    display_text: titleText.substring(0, 20), 
+                    id: `.ainfo ${safeStr(res.id)}` 
+                })
+            };
+        }).filter(b => b !== null);
 
         await deleteMsg(hansaka, from, statusMsg.key);
         const img = getAnimeImg();
@@ -108,7 +112,10 @@ async (hansaka, mek, m, { from, q, reply }) => {
             interactiveButtons: buttons
         });
 
-    } catch (e) { reply(formatMsg("🔴 *Error*", e.message)); }
+    } catch (e) { 
+        console.error(e);
+        reply(formatMsg("🔴 *System Error*", e.message || "පැහැදිලි කළ නොහැකි දෝෂයකි.")); 
+    }
 });
 
 // =============================================
@@ -185,7 +192,7 @@ cmd({ pattern: "e", filename: __filename }, async (hansaka, mek, m, { from, q, r
         const sources = await getStreamLink(epObj.id);
         let buttons = sources.filter(s => s.quality !== 'backup').slice(0, 3).map(s => ({
             name: 'quick_reply',
-            buttonParamsJson: JSON.stringify({ display_text: `🎥 ${s.quality}`, id: `.d ${epObj.id}|${s.quality}|${epNum}` })
+            buttonParamsJson: JSON.stringify({ display_text: `🎥 ${safeStr(s.quality)}`, id: `.d ${epObj.id}|${safeStr(s.quality)}|${epNum}` })
         }));
 
         await deleteMsg(hansaka, from, statusMsg.key);
@@ -205,7 +212,7 @@ cmd({ pattern: "e", filename: __filename }, async (hansaka, mek, m, { from, q, r
 cmd({ pattern: "d", filename: __filename }, async (hansaka, mek, m, { from, q, reply }) => {
     try {
         const [epId, qual, num] = q.split('|');
-        let status = await reply(formatMsg("🔄 *Downloading...*", `Episode ${num} (${qual}) බාගත කරමින්...`));
+        let status = await reply(formatMsg("🔄 *Downloading...*", `Episode ${num} (${qual}) බාගත කරමින්...⏳`));
         const sources = await getStreamLink(epId);
         const stream = sources.find(s => s.quality === qual)?.url || sources[0].url;
 
