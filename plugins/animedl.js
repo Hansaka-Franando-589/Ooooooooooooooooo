@@ -128,15 +128,16 @@ cmd({ pattern: "ainfo", filename: __filename }, async (hansaka, mek, m, { from, 
 
         const info = await getEpisodes(animeId);
         
-        // 🛠️ FIX: API Validation Check
-        if (!info || info.error || !info.title) {
+        // 🛠️ FIX: Relaxed Validation Check (Checks for error, but allows missing title if name exists)
+        if (!info || info.error) {
             await deleteMsg(hansaka, from, statusMsg.key);
             return reply(formatMsg("🔴 *Not Found*", "ඇනිමේ විස්තර ලබා ගැනීමට නොහැකි විය. API දෝෂයක් විය හැක."));
         }
 
         const totalEp = parseInt(info.totalEpisodes || info.episodes?.length || 0);
 
-        let body = `🎬 *${safeStr(info.title)}*\n\n` +
+        // 🛠️ FIX: Uses info.name as a fallback if info.title is missing
+        let body = `🎬 *${safeStr(info.title || info.name)}*\n\n` +
                    `🌟 *Rating:* ${info.rating || 'N/A'}\n` +
                    `📺 *Total Episodes:* ${totalEp}\n\n` +
                    `*📂 EPISODE CATEGORIES*\n`;
@@ -201,6 +202,12 @@ cmd({ pattern: "e", filename: __filename }, async (hansaka, mek, m, { from, q, r
         if (!epObj && epNum === 1 && info.episodes.length > 0) epObj = info.episodes[0];
 
         const sources = await getStreamLink(epObj.id);
+        
+        if (!sources || sources.length === 0) {
+            await deleteMsg(hansaka, from, statusMsg.key);
+            return reply(formatMsg("🔴 *Error*", "මෙම කොටස සඳහා ලින්ක් හමු නොවීය."));
+        }
+
         let buttons = sources.filter(s => s.quality !== 'backup').slice(0, 3).map(s => ({
             name: 'quick_reply',
             buttonParamsJson: JSON.stringify({ display_text: `🎥 ${safeStr(s.quality)}`, id: `.d ${epObj.id}|${safeStr(s.quality)}|${epNum}` })
@@ -225,7 +232,13 @@ cmd({ pattern: "d", filename: __filename }, async (hansaka, mek, m, { from, q, r
         const [epId, qual, num] = q.split('|');
         let status = await reply(formatMsg("🔄 *Downloading...*", `Episode ${num} (${qual}) බාගත කරමින්...⏳`));
         const sources = await getStreamLink(epId);
-        const stream = sources.find(s => s.quality === qual)?.url || sources[0].url;
+        
+        // 🛠️ FIX: Added safety check if stream URL is missing
+        const stream = sources.find(s => s.quality === qual)?.url || sources[0]?.url;
+        if (!stream) {
+            await deleteMsg(hansaka, from, status.key);
+            return reply(formatMsg("🔴 *Error*", "බාගත කිරීමේ ලින්ක් එක ලබා ගැනීමට නොහැකි විය."));
+        }
 
         const dataDir = path.join(__dirname, '../data');
         if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir);
