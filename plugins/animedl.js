@@ -1,5 +1,4 @@
 const { cmd } = require('../command');
-const consumet = require('@consumet/extensions');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
@@ -11,100 +10,77 @@ const formatMsg = (title, body) =>
     `✦ ━━━━━━━━━━━━━━━ ✦\n${title}\n\n${body}\n✦ ━━━━━━━━━━━━━━━ ✦\n> 𝓐𝓼𝓼𝓲𝓼𝓽𝓪𝓷𝓽 𝓞𝓵𝔂𝓪 💞🐝`;
 
 // =============================================
-// DYNAMIC PROVIDER FINDER 🔥
+// NEW: DIRECT API FETCHER (No Consumet Package! 🔥)
 // =============================================
-// Consumet Package එකේ නම් වෙනස් වුණත්, ඇතුළේ තියෙන වැඩ කරන අයව ස්වයංක්‍රීයව හොයාගැනීම.
-const PROVIDERS = {};
-const animeModule = consumet.ANIME || consumet.PROVIDERS?.ANIME || {}; 
-const excluded = ['animepahe', 'zoro', 'enime']; // වැඩ කරන්නේ නැති අඩවි
-
-Object.keys(animeModule).forEach(key => {
-    if (typeof animeModule[key] === 'function' && !excluded.includes(key.toLowerCase())) {
-        PROVIDERS[key.toLowerCase()] = () => new animeModule[key]();
-        console.log(`[Olya Assistant] ✅ Loaded Anime Provider: ${key}`);
-    }
-});
-
-const http = axios.create({
-    timeout: 20000,
-    headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    }
-});
-
-// =============================================
-// HELPER: Search
-// =============================================
-async function searchWithFallback(query) {
-    const providerNames = Object.keys(PROVIDERS);
-    if (providerNames.length === 0) {
-        throw new Error('Consumet package එකේ කිසිදු Anime Provider කෙනෙක් සොයාගත නොහැක! Package එකේ දෝෂයකි. ⚠️');
-    }
-
-    let lastErr = null;
-    for (const name of providerNames) {
+async function searchAnime(query) {
+    // අපි API දෙකක් පාවිච්චි කරනවා, එකක් fail වුණොත් අනිත් එකෙන් ගන්න
+    const apis = [
+        `https://api.anispace.workers.dev/search/${encodeURIComponent(query)}`,
+        `https://api-anime-dex.onrender.com/search/${encodeURIComponent(query)}`
+    ];
+    
+    for (let url of apis) {
         try {
-            console.log(`[Search] Trying ${name}...`);
-            const provider = PROVIDERS[name]();
-            const res = await provider.search(query);
-            if (res?.results?.length > 0) {
-                return { results: res.results, providerName: name, provider };
+            const res = await axios.get(url, { timeout: 15000 });
+            const data = res.data.results || res.data.data || res.data;
+            if (Array.isArray(data) && data.length > 0) return data[0];
+        } catch (e) {
+            console.log(`[Search Failed] ${url}`);
+        }
+    }
+    throw new Error("Anime එක සෙවීමේදී දෝෂයක්. සර්වර් කාර්යබහුලයි.");
+}
+
+async function getEpisodes(animeId) {
+    const apis = [
+        `https://api.anispace.workers.dev/anime/${animeId}`,
+        `https://api-anime-dex.onrender.com/anime/${animeId}`
+    ];
+    
+    for (let url of apis) {
+        try {
+            const res = await axios.get(url, { timeout: 15000 });
+            const data = res.data.results || res.data.data || res.data;
+            if (data.episodes) return data;
+        } catch (e) {
+            console.log(`[Info Failed] ${url}`);
+        }
+    }
+    throw new Error("Episodes ලැයිස්තුව ලබාගත නොහැක.");
+}
+
+async function getStreamLink(episodeId) {
+    const apis = [
+        `https://api.anispace.workers.dev/episode/${episodeId}`,
+        `https://api-anime-dex.onrender.com/episode/${episodeId}`
+    ];
+    
+    for (let url of apis) {
+        try {
+            const res = await axios.get(url, { timeout: 15000 });
+            const data = res.data.results || res.data.data || res.data.sources || res.data;
+            
+            let sources = Array.isArray(data) ? data : (data.sources || []);
+            if (sources.length > 0) {
+                // හොඳම Quality එක තෝරාගැනීම
+                const best = sources.find(s => s.quality && s.quality.includes('720')) || 
+                             sources.find(s => s.quality && s.quality.includes('1080')) || 
+                             sources.find(s => s.quality && s.quality.includes('default')) || 
+                             sources[0];
+                if (best && best.url) return { url: best.url, quality: best.quality || 'HD' };
             }
         } catch (e) {
-            console.error(`[${name}] search error:`, e.message);
-            lastErr = e;
+            console.log(`[Stream Failed] ${url}`);
         }
     }
-    throw lastErr || new Error('Anime එක කිසිදු අඩවියකින් සොයා ගැනීමට නොහැකි විය.');
+    throw new Error("Stream link එක ලබාගත නොහැක.");
 }
 
-// =============================================
-// HELPER: Fetch anime info
-// =============================================
-async function fetchInfoWithFallback(animeId, providerName) {
-    const names = providerName ? [providerName] : Object.keys(PROVIDERS);
-    let lastErr = null;
-    for (const name of names) {
-        try {
-            if (!PROVIDERS[name]) continue;
-            const provider = PROVIDERS[name]();
-            const info = await provider.fetchAnimeInfo(animeId);
-            if (info?.episodes?.length > 0) return { info, providerName: name, provider };
-        } catch (e) {
-            console.error(`[${name}] fetchInfo error:`, e.message);
-            lastErr = e;
-        }
-    }
-    throw lastErr || new Error('Anime info ලබාගත නොහැක.');
-}
-
-// =============================================
-// HELPER: Fetch episode sources & Best quality
-// =============================================
-async function fetchSources(provider, episodeId) {
-    const data = await provider.fetchEpisodeSources(episodeId);
-    return data?.sources || [];
-}
-
-function selectBestSource(sources) {
-    if (!sources?.length) return null;
-    const priority = ['1080p', '720p', '480p', '360p', 'default', 'backup'];
-    for (const q of priority) {
-        const found = sources.find(s => s.quality === q);
-        if (found?.url) return found;
-    }
-    return sources.find(s => s.url) || null;
-}
-
-// =============================================
-// HELPER: FFmpeg M3U8/MP4 → local MP4
-// =============================================
-function convertToMP4(streamUrl, outputPath, referer) {
+function convertToMP4(streamUrl, outputPath) {
     return new Promise((resolve, reject) => {
         ffmpeg(streamUrl)
             .inputOptions([
-                '-headers',
-                `Referer: ${referer}\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)\r\n`,
+                '-headers', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)\r\n',
                 '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
             ])
             .outputOptions([
@@ -124,7 +100,7 @@ function convertToMP4(streamUrl, outputPath, referer) {
 // =============================================
 cmd({
     pattern: "animevid",
-    desc: "Search Anime and get Episode download info",
+    desc: "Search Anime",
     category: "downloader",
     filename: __filename
 },
@@ -135,47 +111,43 @@ async (hansaka, mek, m, { from, q, reply }) => {
         await hansaka.sendMessage(from, { react: { text: "🔍", key: mek.key } });
         await reply(formatMsg("🔍 *Searching...*", `"${q}" සොයමින් පවතී...⏳`));
 
-        let searchResult;
+        let anime;
         try {
-            searchResult = await searchWithFallback(q);
+            anime = await searchAnime(q);
         } catch (e) {
-            return reply(formatMsg("🔴 *Server Error*", `${e.message}`));
+            return reply(formatMsg("🔴 *Server Error*", e.message));
         }
-
-        const anime = searchResult.results[0];
-        const providerName = searchResult.providerName;
 
         let totalEp = "?";
         try {
-            const { info } = await fetchInfoWithFallback(anime.id, providerName);
-            totalEp = info?.totalEpisodes || info?.episodes?.length || "?";
+            const info = await getEpisodes(anime.id);
+            totalEp = info.totalEpisodes || info.episodes?.length || "?";
         } catch (_) {}
 
         const body =
-            `🎬 *${anime.title}*\n\n` +
-            `📺 *Total Episodes:* ${totalEp}\n` +
-            `🌐 *Provider:* ${providerName}\n\n` +
+            `🎬 *${anime.title || anime.name}*\n\n` +
+            `📺 *Total Episodes:* ${totalEp}\n\n` +
             `👇 Download කිරීමට, *මේ message* reply කරලා:\n` +
             `*.ep 1* → Episode 1\n\n` +
-            `> 📌 *ANID:* ${anime.id}|${providerName}`;
+            `> 📌 *ANID:* ${anime.id}`;
 
         try {
             await hansaka.sendMessage(from, {
-                image: { url: anime.image },
+                image: { url: anime.image || anime.img },
                 caption: formatMsg("✅ *Anime Found!*", body)
             }, { quoted: mek });
         } catch (_) {
             await reply(formatMsg("✅ *Anime Found!*", body));
         }
-        await hansaka.sendMessage(from, { react: { text: "✅", key: mek.key } });
+        hansaka.sendMessage(from, { react: { text: "✅", key: mek.key } }).catch(()=>{});
 
     } catch (e) {
-        reply(formatMsg("🔴 *Error*", e.message));
+        reply(formatMsg("🔴 *Error*", e.message)).catch(()=>{});
     }
 });
 
 // =============================================
-// 2. DOWNLOAD COMMAND: .ep <number> (BULLETPROOF & TIMEOUT SAFE 🛡️)
+// 2. DOWNLOAD COMMAND: .ep <number>
 // =============================================
 cmd({
     pattern: "ep",
@@ -185,11 +157,9 @@ cmd({
 },
 async (hansaka, mek, m, { from, q, reply }) => {
     try {
-        console.log("--> [TRACKER] 1. EP Command පටන් ගත්තා!");
         if (!q) return reply(formatMsg("🔴 *Input Error*", "Episode number එක දෙන්න."));
         const epNumber = parseInt(q.trim());
 
-        // ඕනෑම ආකාරයක Quoted Text එකක් ආරක්ෂිතව කියවීම
         let rawText = "";
         try {
             const quotedMsg = mek.message?.extendedTextMessage?.contextInfo?.quotedMessage;
@@ -199,57 +169,35 @@ async (hansaka, mek, m, { from, q, reply }) => {
         rawText = String(rawText);
 
         if (!rawText.includes("ANID:")) {
-            return reply(formatMsg("🔴 *Action Required*", "*.animevid* result මැසේජ් එක අනිවාර්යයෙන්ම *Reply* කරලා .ep කමාන්ඩ් එක ගහන්න."));
+            return reply(formatMsg("🔴 *Action Required*", "*.animevid* result මැසේජ් එක *Reply* කරලා .ep කමාන්ඩ් එක ගහන්න."));
         }
 
-        const anidMatch = rawText.match(/ANID:\s*([^\s|]+)\|([a-zA-Z0-9_]+)/i);
+        const anidMatch = rawText.match(/ANID:\s*([^\s|]+)/i);
         if (!anidMatch) return reply(formatMsg("🔴 *ID Error*", "Anime ID එක කියවාගත නොහැක."));
 
         const animeId = anidMatch[1].trim();
-        const providerName = anidMatch[2].toLowerCase();
-        console.log(`--> [TRACKER] 3. Anime ID: ${animeId} | Provider: ${providerName}`);
 
-        // Error ආවත් කෝඩ් එක හිර නොවන ආකාරයට Reply කිරීම (Non-blocking)
-        console.log("--> [TRACKER] 4. Reaction යවනවා...");
-        hansaka.sendMessage(from, { react: { text: "📥", key: mek.key } }).catch(() => console.log("React failed, skipping..."));
+        hansaka.sendMessage(from, { react: { text: "📥", key: mek.key } }).catch(()=>{});
+        reply(formatMsg("📋 *Loading Episode*", `Episode ${epNumber} ලොඩ් කරමින්...`)).catch(()=>{});
 
-        console.log("--> [TRACKER] 5. Loading Text...");
-        reply(formatMsg("📋 *Loading Episode*", `Episode ${epNumber} ලොඩ් කරමින්...`)).catch(() => console.log("Reply failed, skipping..."));
-
-        // තත්පර 15ක කාල සීමාවක් (Timeout) සහිතව Fetch කිරීම
-        const withTimeout = (promise, ms) => {
-            let timer;
-            const timeout = new Promise((_, reject) => timer = setTimeout(() => reject(new Error("Server Timeout")), ms));
-            return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
-        };
-
-        console.log("--> [TRACKER] 6. Fetching info (with 15s timeout)...");
-        let animeInfo, provider;
+        let animeInfo;
         try {
-            const result = await withTimeout(fetchInfoWithFallback(animeId, providerName), 15000);
-            animeInfo = result.info;
-            provider = result.provider;
+            animeInfo = await getEpisodes(animeId);
         } catch (e) {
-            console.log("--> [TRACKER] 🔴 ERROR in fetchInfo:", e.message);
-            return reply(formatMsg("🔴 *Server Error*", `Anime server එකෙන් response එකක් නැත. විනාඩියකින් නැවත උත්සාහ කරන්න.`));
+            return reply(formatMsg("🔴 *Server Error*", e.message));
         }
 
         const epObj = animeInfo.episodes.find(e => e.number === epNumber);
         if (!epObj) return reply(formatMsg("🔴 *Not Found*", `Episode ${epNumber} නිකුත් නොවීය.`));
 
-        console.log("--> [TRACKER] 7. Fetching streams...");
-        let sources;
+        let streamData;
         try {
-            sources = await withTimeout(fetchSources(provider, epObj.id), 15000);
+            streamData = await getStreamLink(epObj.id);
         } catch (e) {
             return reply(formatMsg("🔴 *Stream Error*", e.message));
         }
 
-        const best = selectBestSource(sources);
-        if (!best?.url) return reply(formatMsg("🔴 *Error*", "නිවැරදි stream URL නෑ."));
-
-        console.log(`--> [TRACKER] 8. Downloading Quality: ${best.quality || "HD"}`);
-        reply(formatMsg("🔄 *Downloading*", `🎬 Quality: ${best.quality || "HD"}\nVideo convert කරමින් පවතී... ⏳`)).catch(() => {});
+        reply(formatMsg("🔄 *Downloading*", `🎬 Quality: ${streamData.quality}\nVideo convert කරමින් පවතී... ⏳`)).catch(()=>{});
 
         const dataDir = path.join(__dirname, '..', 'data');
         if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
@@ -259,10 +207,10 @@ async (hansaka, mek, m, { from, q, reply }) => {
         const filePath = path.join(dataDir, fileName);
 
         try {
-            await convertToMP4(best.url, filePath, 'https://gogoanime3.co/');
+            await convertToMP4(streamData.url, filePath);
         } catch (ffErr) {
             if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-            return reply(formatMsg("🔴 *Convert Error*", ffErr.message));
+            return reply(formatMsg("🔴 *Convert Error*", "Video එක සැකසීමේදී දෝෂයක් ඇතිවිය."));
         }
 
         const fileSize = fs.statSync(filePath).size;
@@ -273,7 +221,7 @@ async (hansaka, mek, m, { from, q, reply }) => {
             return reply(formatMsg("🔴 *Too Large*", `File size ${sizeMB}MB - WhatsApp 100MB limit ඉක්මවාය.`));
         }
 
-        reply(formatMsg("📤 *Uploading*", `✅ Convert සාර්ථකයි! (${sizeMB} MB)`)).catch(() => {});
+        reply(formatMsg("📤 *Uploading*", `✅ Convert සාර්ථකයි! (${sizeMB} MB)`)).catch(()=>{});
 
         try {
             const buf = fs.readFileSync(filePath);
@@ -283,7 +231,7 @@ async (hansaka, mek, m, { from, q, reply }) => {
                 fileName: `Anime_EP${epNumber}.mp4`,
                 caption: formatMsg(`🎬 *Episode ${epNumber}*`, `✅ Download සාර්ථකයි!\n📁 Size: ${sizeMB} MB`)
             }, { quoted: mek });
-            hansaka.sendMessage(from, { react: { text: "✅", key: mek.key } }).catch(() => {});
+            hansaka.sendMessage(from, { react: { text: "✅", key: mek.key } }).catch(()=>{});
         } catch (sendErr) {
             reply(formatMsg("🔴 *Upload Error*", sendErr.message));
         } finally {
@@ -291,7 +239,6 @@ async (hansaka, mek, m, { from, q, reply }) => {
         }
 
     } catch (e) {
-        console.error("--> [TRACKER] 🔴 CRITICAL ERROR: ", e);
-        reply(formatMsg("🔴 *Error*", e.message)).catch(() => {});
+        reply(formatMsg("🔴 *Error*", e.message)).catch(()=>{});
     }
 });
