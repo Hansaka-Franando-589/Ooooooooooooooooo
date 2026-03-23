@@ -15,10 +15,12 @@ const FOOTER_TEXT = "✨ 𝓔𝓵𝓮𝓰𝓪𝓷𝓽 𝓢𝓮𝓷𝓹𝓪𝓲 �
 const formatMsg = (title, body) =>
     `✦ ━━━━━━━━━━━━━━━ ✦\n${title}\n\n${body}\n✦ ━━━━━━━━━━━━━━━ ✦\n\n> ${FOOTER_TEXT}`;
 
+// Message Delete Helper
 const deleteMsg = async (hansaka, from, key) => {
     try { if (key) await hansaka.sendMessage(from, { delete: key }); } catch (e) {}
 };
 
+// Safe String Converter
 const safeStr = (val) => {
     if (val === null || val === undefined) return "N/A";
     let str = typeof val === 'object' ? (val.english || val.romaji || val.userPreferred || JSON.stringify(val)) : String(val);
@@ -26,9 +28,9 @@ const safeStr = (val) => {
 };
 
 // =============================================
-// API FETCHERS (STABLE MIRROR ENGINE) 🔥
+// API FETCHERS (NEW PRIVATE MIRROR) 🔥
 // =============================================
-// Railway IP Block නොවන අලුත්ම Mirror එකක්
+// 🛠️ 451 Block එක මඟහරින අලුත්ම Endpoint එක
 const BASE_URL = "https://consumet-api-clone.vercel.app/anime/gogoanime";
 
 async function searchAnimeList(query) {
@@ -36,7 +38,10 @@ async function searchAnimeList(query) {
         const url = `${BASE_URL}/${encodeURIComponent(query)}`;
         const res = await axios.get(url, { timeout: 15000 });
         return res.data.results || [];
-    } catch (e) { return []; }
+    } catch (e) {
+        console.error("🔴 Search Error:", e.message);
+        return [];
+    }
 }
 
 async function getEpisodes(animeId) {
@@ -44,7 +49,9 @@ async function getEpisodes(animeId) {
         const url = `${BASE_URL}/info/${encodeURIComponent(animeId)}`;
         const res = await axios.get(url, { timeout: 15000 });
         return res.data || {};
-    } catch (e) { return { error: true }; }
+    } catch (e) {
+        return { error: true };
+    }
 }
 
 async function getStreamLink(episodeId) {
@@ -52,7 +59,9 @@ async function getStreamLink(episodeId) {
         const url = `${BASE_URL}/watch/${encodeURIComponent(episodeId)}`;
         const res = await axios.get(url, { timeout: 15000 });
         return res.data.sources || [];
-    } catch (e) { return []; }
+    } catch (e) {
+        return [];
+    }
 }
 
 function convertToMP4(streamUrl, outputPath) {
@@ -75,19 +84,22 @@ async (hansaka, mek, m, { from, q, reply }) => {
     try {
         if (!q) return reply(formatMsg("🔴 *Error*", "Anime නම ලබා දෙන්න."));
         await hansaka.sendMessage(from, { react: { text: "🔍", key: mek.key } });
-        const statusMsg = await reply(formatMsg("🔍 *Searching...*", `"${q}" සොයමින්...`));
+        const statusMsg = await reply(formatMsg("🔍 *Searching...*", `"${q}" සොයමින් පවතී... ⏳`));
+        
         const results = await searchAnimeList(q);
         if (results.length === 0) {
             await deleteMsg(hansaka, from, statusMsg.key);
-            return reply(formatMsg("🔴 *Not Found*", "කිසිවක් හමු නොවීය."));
+            return reply(formatMsg("🔴 *Not Found*", "සොයන නමට අදාළ කිසිවක් හමු නොවීය."));
         }
+
         let buttons = results.slice(0, 5).map(res => ({
             name: 'quick_reply',
             buttonParamsJson: JSON.stringify({ display_text: safeStr(res.title).substring(0, 20), id: `.ainfo ${res.id}` })
         }));
+
         await deleteMsg(hansaka, from, statusMsg.key);
         await sendInteractiveMessage(hansaka, from, {
-            text: `🔍 *RESULTS:* ${q}`,
+            text: `🔍 *SEARCH RESULTS FOR:* ${q}`,
             footer: FOOTER_TEXT,
             image: { url: results[0].image },
             interactiveButtons: buttons
@@ -102,10 +114,13 @@ cmd({ pattern: "ainfo", filename: __filename }, async (hansaka, mek, m, { from, 
     try {
         const info = await getEpisodes(q.trim());
         if (!info || info.error) return reply(formatMsg("🔴 *Error*", "විස්තර ලබාගත නොහැක."));
+
         const eps = info.episodes || [];
-        let body = `🎬 *${safeStr(info.title)}*\n📺 *Episodes:* ${eps.length}\n\n📌 *EPISODE LIST*\n`;
+        let body = `🎬 *${safeStr(info.title)}*\n📅 *Release:* ${info.releaseDate || 'N/A'}\n📺 *Episodes:* ${eps.length}\n\n📌 *EPISODE LIST*\n`;
+        
         eps.slice(0, 10).forEach(e => body += `[ *${e.number}* ] Ep ${e.number}\n`);
-        body += `\n📌 *.ep <අංකය>* ලෙස reply කරන්න.\n\n> 📌 ANID: ${q.trim()}`;
+        body += `\n📌 *.ep <අංකය>* ලෙස Reply කරන්න.\n\n> 📌 ANID: ${q.trim()}`;
+
         await hansaka.sendMessage(from, { image: { url: info.image }, caption: formatMsg("✅ *Info*", body) }, { quoted: mek });
     } catch (e) { reply(formatMsg("🔴 *Error*", e.message)); }
 });
@@ -117,16 +132,19 @@ cmd({ pattern: "ep", filename: __filename }, async (hansaka, mek, m, { from, q, 
     try {
         const rawText = m.quoted?.text || m.quoted?.caption || m.quoted?.msg?.caption || "";
         const animeId = rawText.match(/ANID:\s*([^\s]+)/)?.[1];
-        if (!animeId) return reply(formatMsg("🔴 *Error*", "Anime Info එකට reply කරන්න."));
+        if (!animeId) return reply(formatMsg("🔴 *Error*", "Anime Info එකට Reply කරන්න."));
+
         const info = await getEpisodes(animeId);
         const epObj = info.episodes?.find(e => e.number == q);
         if (!epObj) return reply(formatMsg("🔴 *Error*", "Episode එක හමු නොවීය."));
+
         const sources = await getStreamLink(epObj.id);
         let buttons = sources.slice(0, 3).map(s => ({
             name: 'quick_reply',
             buttonParamsJson: JSON.stringify({ display_text: `🎥 ${s.quality}`, id: `.dl ${epObj.id}|${s.quality}|${q}` })
         }));
-        await sendInteractiveMessage(hansaka, from, { text: `🎬 Ep ${q}`, footer: FOOTER_TEXT, interactiveButtons: buttons });
+
+        await sendInteractiveMessage(hansaka, from, { text: `🎬 Ep ${q} Quality එක තෝරන්න:`, footer: FOOTER_TEXT, interactiveButtons: buttons });
     } catch (e) { reply(formatMsg("🔴 *Error*", e.message)); }
 });
 
@@ -136,11 +154,15 @@ cmd({ pattern: "ep", filename: __filename }, async (hansaka, mek, m, { from, q, 
 cmd({ pattern: "dl", filename: __filename }, async (hansaka, mek, m, { from, q, reply }) => {
     const [id, qual, num] = q.split('|');
     const filePath = path.join(__dirname, `../data/temp_${Date.now()}.mp4`);
+    if (!fs.existsSync(path.join(__dirname, '../data'))) fs.mkdirSync(path.join(__dirname, '../data'));
+
     try {
+        await reply(formatMsg("🔄 *Downloading...*", `Episode ${num} බාගත කරමින්...⏳`));
         const sources = await getStreamLink(id);
         const url = sources.find(s => s.quality === qual)?.url || sources[0].url;
+        
         await convertToMP4(url, filePath);
-        await hansaka.sendMessage(from, { document: { url: filePath }, mimetype: 'video/mp4', fileName: `Ep_${num}.mp4`, caption: `🎬 Ep ${num} (${qual})` }, { quoted: mek });
+        await hansaka.sendMessage(from, { document: { url: filePath }, mimetype: 'video/mp4', fileName: `Anime_Ep${num}.mp4`, caption: `🎬 Ep ${num} (${qual})` }, { quoted: mek });
     } catch (e) { reply(formatMsg("🔴 *Error*", e.message)); }
     finally { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); }
 });
