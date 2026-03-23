@@ -1,5 +1,5 @@
 const { cmd } = require('../command');
-const { ANIME } = require('@consumet/extensions');
+const consumet = require('@consumet/extensions');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
@@ -11,12 +11,19 @@ const formatMsg = (title, body) =>
     `✦ ━━━━━━━━━━━━━━━ ✦\n${title}\n\n${body}\n✦ ━━━━━━━━━━━━━━━ ✦\n> 𝓐𝓼𝓼𝓲𝓼𝓽𝓪𝓷𝓽 𝓞𝓵𝔂𝓪 💞🐝`;
 
 // =============================================
-// PROVIDER LIST (Only Stable Providers)
+// DYNAMIC PROVIDER FINDER 🔥
 // =============================================
-// අක්‍රිය වූ Zoro සහ වෙනත් providers ඉවත් කර ඇත.
-const PROVIDERS = {
-    gogoanime: () => new ANIME.Gogoanime()
-};
+// Consumet Package එකේ නම් වෙනස් වුණත්, ඇතුළේ තියෙන වැඩ කරන අයව ස්වයංක්‍රීයව හොයාගැනීම.
+const PROVIDERS = {};
+const animeModule = consumet.ANIME || consumet.PROVIDERS?.ANIME || {}; 
+const excluded = ['animepahe', 'zoro', 'enime']; // වැඩ කරන්නේ නැති අඩවි
+
+Object.keys(animeModule).forEach(key => {
+    if (typeof animeModule[key] === 'function' && !excluded.includes(key.toLowerCase())) {
+        PROVIDERS[key.toLowerCase()] = () => new animeModule[key]();
+        console.log(`[Olya Assistant] ✅ Loaded Anime Provider: ${key}`);
+    }
+});
 
 const http = axios.create({
     timeout: 20000,
@@ -29,9 +36,15 @@ const http = axios.create({
 // HELPER: Search
 // =============================================
 async function searchWithFallback(query) {
+    const providerNames = Object.keys(PROVIDERS);
+    if (providerNames.length === 0) {
+        throw new Error('Consumet package එකේ කිසිදු Anime Provider කෙනෙක් සොයාගත නොහැක! Package එකේ දෝෂයකි. ⚠️');
+    }
+
     let lastErr = null;
-    for (const name of Object.keys(PROVIDERS)) {
+    for (const name of providerNames) {
         try {
+            console.log(`[Search] Trying ${name}...`);
             const provider = PROVIDERS[name]();
             const res = await provider.search(query);
             if (res?.results?.length > 0) {
@@ -42,7 +55,7 @@ async function searchWithFallback(query) {
             lastErr = e;
         }
     }
-    throw lastErr || new Error('Anime එක සොයා ගැනීමට නොහැකි විය.');
+    throw lastErr || new Error('Anime එක කිසිදු අඩවියකින් සොයා ගැනීමට නොහැකි විය.');
 }
 
 // =============================================
@@ -66,16 +79,13 @@ async function fetchInfoWithFallback(animeId, providerName) {
 }
 
 // =============================================
-// HELPER: Fetch episode sources
+// HELPER: Fetch episode sources & Best quality
 // =============================================
 async function fetchSources(provider, episodeId) {
     const data = await provider.fetchEpisodeSources(episodeId);
     return data?.sources || [];
 }
 
-// =============================================
-// HELPER: Best quality selector
-// =============================================
 function selectBestSource(sources) {
     if (!sources?.length) return null;
     const priority = ['1080p', '720p', '480p', '360p', 'default', 'backup'];
@@ -94,7 +104,7 @@ function convertToMP4(streamUrl, outputPath, referer) {
         ffmpeg(streamUrl)
             .inputOptions([
                 '-headers',
-                `Referer: ${referer}\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36\r\n`,
+                `Referer: ${referer}\r\nUser-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)\r\n`,
                 '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
             ])
             .outputOptions([
@@ -129,8 +139,7 @@ async (hansaka, mek, m, { from, q, reply }) => {
         try {
             searchResult = await searchWithFallback(q);
         } catch (e) {
-            return reply(formatMsg("🔴 *Server Error*", 
-                `Anime සෙවීමේදී දෝෂයක් ඇතිවිය.\n*Error:* ${e.message}\n\n⚠️ Gogoanime server එකට connect වීමට නොහැක.`));
+            return reply(formatMsg("🔴 *Server Error*", `${e.message}`));
         }
 
         const anime = searchResult.results[0];
@@ -191,7 +200,7 @@ async (hansaka, mek, m, { from, q, reply }) => {
         }
         rawText = String(rawText);
 
-        const anidMatch = rawText.match(/ANID:\s*([^\s|]+)\|([a-z]+)/i);
+        const anidMatch = rawText.match(/ANID:\s*([^\s|]+)\|([a-zA-Z0-9_]+)/i);
         if (!anidMatch) return reply(formatMsg("🔴 *ID Error*", "Anime ID හොයාගන්න බැරිවුණා. ආයෙත් *.animevid* ගහන්න."));
 
         const animeId = anidMatch[1].trim();
