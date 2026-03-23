@@ -175,7 +175,7 @@ async (hansaka, mek, m, { from, q, reply }) => {
 });
 
 // =============================================
-// 2. DOWNLOAD COMMAND: .ep <number> (FIXED QUOTE EXTRACTOR 🛠️)
+// 2. DOWNLOAD COMMAND: .ep <number> (BULLETPROOF & TIMEOUT SAFE 🛡️)
 // =============================================
 cmd({
     pattern: "ep",
@@ -186,55 +186,52 @@ cmd({
 async (hansaka, mek, m, { from, q, reply }) => {
     try {
         console.log("--> [TRACKER] 1. EP Command පටන් ගත්තා!");
-        
         if (!q) return reply(formatMsg("🔴 *Input Error*", "Episode number එක දෙන්න."));
         const epNumber = parseInt(q.trim());
-        console.log(`--> [TRACKER] 2. ඉල්ලපු Episode එක: ${epNumber}`);
 
-        // Baileys වල හැම විදිහකින්ම Quoted Text එක අදින්න පුළුවන් Ultimate ක්‍රමය:
+        // ඕනෑම ආකාරයක Quoted Text එකක් ආරක්ෂිතව කියවීම
         let rawText = "";
         try {
             const quotedMsg = mek.message?.extendedTextMessage?.contextInfo?.quotedMessage;
-            rawText = m.quoted?.text || 
-                      m.quoted?.caption || 
-                      m.quoted?.conversation || 
-                      quotedMsg?.imageMessage?.caption || 
-                      quotedMsg?.conversation || 
-                      quotedMsg?.extendedTextMessage?.text || 
-                      "";
-        } catch (e) {
-            console.log("--> [TRACKER] ERROR reading quote:", e.message);
-        }
+            rawText = m.quoted?.text || m.quoted?.caption || quotedMsg?.imageMessage?.caption || quotedMsg?.extendedTextMessage?.text || "";
+        } catch (e) {}
         
         rawText = String(rawText);
-        console.log(`--> [TRACKER] 2.5 කියවපු Text එක: ${rawText.substring(0, 50)}...`);
 
         if (!rawText.includes("ANID:")) {
             return reply(formatMsg("🔴 *Action Required*", "*.animevid* result මැසේජ් එක අනිවාර්යයෙන්ම *Reply* කරලා .ep කමාන්ඩ් එක ගහන්න."));
         }
 
         const anidMatch = rawText.match(/ANID:\s*([^\s|]+)\|([a-zA-Z0-9_]+)/i);
-        if (!anidMatch) return reply(formatMsg("🔴 *ID Error*", "Anime ID එක කියවාගත නොහැක. ආයෙත් *.animevid* ගහන්න."));
+        if (!anidMatch) return reply(formatMsg("🔴 *ID Error*", "Anime ID එක කියවාගත නොහැක."));
 
         const animeId = anidMatch[1].trim();
         const providerName = anidMatch[2].toLowerCase();
         console.log(`--> [TRACKER] 3. Anime ID: ${animeId} | Provider: ${providerName}`);
 
+        // Error ආවත් කෝඩ් එක හිර නොවන ආකාරයට Reply කිරීම (Non-blocking)
         console.log("--> [TRACKER] 4. Reaction යවනවා...");
-        await hansaka.sendMessage(from, { react: { text: "📥", key: mek.key } });
+        hansaka.sendMessage(from, { react: { text: "📥", key: mek.key } }).catch(() => console.log("React failed, skipping..."));
 
         console.log("--> [TRACKER] 5. Loading Text...");
-        await reply(formatMsg("📋 *Loading Episode*", `Episode ${epNumber} ලොඩ් කරමින්...`));
+        reply(formatMsg("📋 *Loading Episode*", `Episode ${epNumber} ලොඩ් කරමින්...`)).catch(() => console.log("Reply failed, skipping..."));
 
-        console.log("--> [TRACKER] 6. Fetching info...");
+        // තත්පර 15ක කාල සීමාවක් (Timeout) සහිතව Fetch කිරීම
+        const withTimeout = (promise, ms) => {
+            let timer;
+            const timeout = new Promise((_, reject) => timer = setTimeout(() => reject(new Error("Server Timeout")), ms));
+            return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+        };
+
+        console.log("--> [TRACKER] 6. Fetching info (with 15s timeout)...");
         let animeInfo, provider;
         try {
-            const result = await fetchInfoWithFallback(animeId, providerName);
+            const result = await withTimeout(fetchInfoWithFallback(animeId, providerName), 15000);
             animeInfo = result.info;
             provider = result.provider;
         } catch (e) {
             console.log("--> [TRACKER] 🔴 ERROR in fetchInfo:", e.message);
-            return reply(formatMsg("🔴 *Network Error*", e.message));
+            return reply(formatMsg("🔴 *Server Error*", `Anime server එකෙන් response එකක් නැත. විනාඩියකින් නැවත උත්සාහ කරන්න.`));
         }
 
         const epObj = animeInfo.episodes.find(e => e.number === epNumber);
@@ -243,7 +240,7 @@ async (hansaka, mek, m, { from, q, reply }) => {
         console.log("--> [TRACKER] 7. Fetching streams...");
         let sources;
         try {
-            sources = await fetchSources(provider, epObj.id);
+            sources = await withTimeout(fetchSources(provider, epObj.id), 15000);
         } catch (e) {
             return reply(formatMsg("🔴 *Stream Error*", e.message));
         }
@@ -252,9 +249,8 @@ async (hansaka, mek, m, { from, q, reply }) => {
         if (!best?.url) return reply(formatMsg("🔴 *Error*", "නිවැරදි stream URL නෑ."));
 
         console.log(`--> [TRACKER] 8. Downloading Quality: ${best.quality || "HD"}`);
-        await reply(formatMsg("🔄 *Downloading*", `🎬 Quality: ${best.quality}\nVideo convert කරමින් පවතී... ⏳`));
+        reply(formatMsg("🔄 *Downloading*", `🎬 Quality: ${best.quality || "HD"}\nVideo convert කරමින් පවතී... ⏳`)).catch(() => {});
 
-        // File paths and conversion...
         const dataDir = path.join(__dirname, '..', 'data');
         if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
@@ -277,7 +273,7 @@ async (hansaka, mek, m, { from, q, reply }) => {
             return reply(formatMsg("🔴 *Too Large*", `File size ${sizeMB}MB - WhatsApp 100MB limit ඉක්මවාය.`));
         }
 
-        await reply(formatMsg("📤 *Uploading*", `✅ Convert සාර්ථකයි! (${sizeMB} MB)`));
+        reply(formatMsg("📤 *Uploading*", `✅ Convert සාර්ථකයි! (${sizeMB} MB)`)).catch(() => {});
 
         try {
             const buf = fs.readFileSync(filePath);
@@ -287,7 +283,7 @@ async (hansaka, mek, m, { from, q, reply }) => {
                 fileName: `Anime_EP${epNumber}.mp4`,
                 caption: formatMsg(`🎬 *Episode ${epNumber}*`, `✅ Download සාර්ථකයි!\n📁 Size: ${sizeMB} MB`)
             }, { quoted: mek });
-            await hansaka.sendMessage(from, { react: { text: "✅", key: mek.key } });
+            hansaka.sendMessage(from, { react: { text: "✅", key: mek.key } }).catch(() => {});
         } catch (sendErr) {
             reply(formatMsg("🔴 *Upload Error*", sendErr.message));
         } finally {
@@ -296,6 +292,6 @@ async (hansaka, mek, m, { from, q, reply }) => {
 
     } catch (e) {
         console.error("--> [TRACKER] 🔴 CRITICAL ERROR: ", e);
-        reply(formatMsg("🔴 *Error*", e.message));
+        reply(formatMsg("🔴 *Error*", e.message)).catch(() => {});
     }
 });
