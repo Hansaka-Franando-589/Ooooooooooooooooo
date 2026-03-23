@@ -7,16 +7,15 @@ const ffmpeg = require('fluent-ffmpeg');
 const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
-// ඔයා ඉල්ලපු අලුත් Assistant Olya ෆූටර් එක
 const formatMsg = (title, body) =>
     `✦ ━━━━━━━━━━━━━━━ ✦\n${title}\n\n${body}\n✦ ━━━━━━━━━━━━━━━ ✦\n> 𝓐𝓼𝓼𝓲𝓼𝓽𝓪𝓷𝓽 𝓞𝓵𝔂𝓪 💞🐝`;
 
 // =============================================
-// PROVIDER LIST (fallback order)
+// PROVIDER LIST (Only Stable Providers)
 // =============================================
+// අක්‍රිය වූ Zoro සහ වෙනත් providers ඉවත් කර ඇත.
 const PROVIDERS = {
-    gogoanime: () => new ANIME.Gogoanime(),
-    zoro: () => new ANIME.Zoro()
+    gogoanime: () => new ANIME.Gogoanime()
 };
 
 const http = axios.create({
@@ -27,12 +26,11 @@ const http = axios.create({
 });
 
 // =============================================
-// HELPER: Try multiple providers for search
+// HELPER: Search
 // =============================================
 async function searchWithFallback(query) {
-    const providerNames = Object.keys(PROVIDERS);
     let lastErr = null;
-    for (const name of providerNames) {
+    for (const name of Object.keys(PROVIDERS)) {
         try {
             const provider = PROVIDERS[name]();
             const res = await provider.search(query);
@@ -44,19 +42,18 @@ async function searchWithFallback(query) {
             lastErr = e;
         }
     }
-    throw lastErr || new Error('All providers failed');
+    throw lastErr || new Error('Anime එක සොයා ගැනීමට නොහැකි විය.');
 }
 
 // =============================================
-// HELPER: Fetch anime info with provider
+// HELPER: Fetch anime info
 // =============================================
 async function fetchInfoWithFallback(animeId, providerName) {
-    const names = providerName
-        ? [providerName, ...Object.keys(PROVIDERS).filter(n => n !== providerName)]
-        : Object.keys(PROVIDERS);
+    const names = providerName ? [providerName] : Object.keys(PROVIDERS);
     let lastErr = null;
     for (const name of names) {
         try {
+            if (!PROVIDERS[name]) continue;
             const provider = PROVIDERS[name]();
             const info = await provider.fetchAnimeInfo(animeId);
             if (info?.episodes?.length > 0) return { info, providerName: name, provider };
@@ -65,7 +62,7 @@ async function fetchInfoWithFallback(animeId, providerName) {
             lastErr = e;
         }
     }
-    throw lastErr || new Error('Info fetch failed');
+    throw lastErr || new Error('Anime info ලබාගත නොහැක.');
 }
 
 // =============================================
@@ -133,7 +130,7 @@ async (hansaka, mek, m, { from, q, reply }) => {
             searchResult = await searchWithFallback(q);
         } catch (e) {
             return reply(formatMsg("🔴 *Server Error*", 
-                `Anime සෙවීමේදී දෝෂයක් ඇතිවිය.\n*Error:* ${e.message}\n\n⚠️ Package එක update කර නැවත උත්සාහ කරන්න.`));
+                `Anime සෙවීමේදී දෝෂයක් ඇතිවිය.\n*Error:* ${e.message}\n\n⚠️ Gogoanime server එකට connect වීමට නොහැක.`));
         }
 
         const anime = searchResult.results[0];
