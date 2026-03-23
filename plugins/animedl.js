@@ -28,7 +28,7 @@ const getAnimeImg = () => {
     } catch (e) { return null; }
 };
 
-// Safe String Converter (වැදගත්ම කොටස! 🛠️)
+// Safe String Converter
 const safeStr = (val) => {
     if (val === null || val === undefined) return "N/A";
     if (typeof val === 'object') return val.english || val.romaji || val.userPreferred || JSON.stringify(val);
@@ -128,7 +128,6 @@ cmd({ pattern: "ainfo", filename: __filename }, async (hansaka, mek, m, { from, 
 
         const info = await getEpisodes(animeId);
         
-        // 🛠️ FIX: Relaxed Validation Check (Checks for error, but allows missing title if name exists)
         if (!info || info.error) {
             await deleteMsg(hansaka, from, statusMsg.key);
             return reply(formatMsg("🔴 *Not Found*", "ඇනිමේ විස්තර ලබා ගැනීමට නොහැකි විය. API දෝෂයක් විය හැක."));
@@ -136,7 +135,6 @@ cmd({ pattern: "ainfo", filename: __filename }, async (hansaka, mek, m, { from, 
 
         const totalEp = parseInt(info.totalEpisodes || info.episodes?.length || 0);
 
-        // 🛠️ FIX: Uses info.name as a fallback if info.title is missing
         let body = `🎬 *${safeStr(info.title || info.name)}*\n\n` +
                    `🌟 *Rating:* ${info.rating || 'N/A'}\n` +
                    `📺 *Total Episodes:* ${totalEp}\n\n` +
@@ -155,7 +153,6 @@ cmd({ pattern: "ainfo", filename: __filename }, async (hansaka, mek, m, { from, 
 
         await deleteMsg(hansaka, from, statusMsg.key);
         
-        // 🛠️ FIX: Safe Image Fallback
         const animeImgUrl = info.image || 'https://i.ibb.co/s93hdn6L/Olya-welcome.png';
         
         await hansaka.sendMessage(from, { image: { url: animeImgUrl }, caption: formatMsg("✅ *Anime Info*", body) }, { quoted: mek });
@@ -169,21 +166,33 @@ cmd({ pattern: "ainfo", filename: __filename }, async (hansaka, mek, m, { from, 
 cmd({ pattern: "c", filename: __filename }, async (hansaka, mek, m, { from, q, reply }) => {
     try {
         const catNum = parseInt(q);
-        const rawText = m.quoted?.text || m.quoted?.caption || "";
-        const animeId = rawText.match(/ANID:\s*([^\s]+)/)?.[1];
-        if (!animeId) return;
+        if (isNaN(catNum)) return reply(formatMsg("🔴 *Error*", "කරුණාකර Category අංකය නිවැරදිව ලබා දෙන්න. (උදා: .c 1)"));
+
+        // 🛠️ FIX: Ultra-safe text extraction from quoted message
+        const rawText = m.quoted?.text || m.quoted?.caption || m.quoted?.msg?.caption || m.quoted?.message?.imageMessage?.caption || "";
+        const animeIdMatch = rawText.match(/ANID:\s*([^\s]+)/);
+        const animeId = animeIdMatch ? animeIdMatch[1] : null;
+
+        if (!animeId) {
+            return reply(formatMsg("🔴 *Error*", "ANID එක සොයාගත නොහැක. කරුණාකර අදාළ Anime Info මැසේජ් එකටම Reply කරන්න."));
+        }
 
         const statusMsg = await reply(formatMsg("📂 *Loading List...*", "ලැයිස්තුව සකසමින්..."));
         const info = await getEpisodes(animeId);
-        const chunk = info.episodes.slice((catNum - 1) * 10, catNum * 10);
+        
+        if (!info || info.error || !info.episodes || info.episodes.length === 0) {
+            await deleteMsg(hansaka, from, statusMsg.key);
+            return reply(formatMsg("🔴 *Error*", "මෙම කාණ්ඩය සඳහා කොටස් සොයාගත නොහැක."));
+        }
 
+        const chunk = info.episodes.slice((catNum - 1) * 10, catNum * 10);
         let body = `📂 *EPISODE LIST (Group ${catNum})*\n\n`;
         chunk.forEach(ep => body += `[ *${ep.number}* ] Episode ${ep.number}\n`);
         body += `\n📌 *Episode අංකය Reply කරන්න. (උදා: .e ${chunk[0].number})*\n\n> 📌 ANID: ${animeId}`;
 
         await deleteMsg(hansaka, from, statusMsg.key);
         await reply(formatMsg("📜 *Episodes List*", body));
-    } catch (e) { reply(e.message); }
+    } catch (e) { reply(formatMsg("🔴 *System Error*", e.message)); }
 });
 
 // =============================================
@@ -192,20 +201,38 @@ cmd({ pattern: "c", filename: __filename }, async (hansaka, mek, m, { from, q, r
 cmd({ pattern: "e", filename: __filename }, async (hansaka, mek, m, { from, q, reply }) => {
     try {
         const epNum = parseInt(q);
-        const rawText = m.quoted?.text || m.quoted?.caption || "";
-        const animeId = rawText.match(/ANID:\s*([^\s]+)/)?.[1];
-        if (!animeId) return;
+        if (isNaN(epNum)) return reply(formatMsg("🔴 *Error*", "කරුණාකර Episode අංකය නිවැරදිව ලබා දෙන්න. (උදා: .e 1)"));
+
+        // 🛠️ FIX: Ultra-safe text extraction to prevent silent returns
+        const rawText = m.quoted?.text || m.quoted?.caption || m.quoted?.msg?.caption || m.quoted?.message?.imageMessage?.caption || "";
+        const animeIdMatch = rawText.match(/ANID:\s*([^\s]+)/);
+        const animeId = animeIdMatch ? animeIdMatch[1] : null;
+
+        if (!animeId) {
+            return reply(formatMsg("🔴 *Error*", "ANID එක සොයාගත නොහැක. කරුණාකර අදාළ Anime Info මැසේජ් එකටම Reply කරන්න."));
+        }
 
         const statusMsg = await reply(formatMsg("🔗 *Fetching Links...*", `Episode ${epNum} ලින්ක් සොයමින්...`));
         const info = await getEpisodes(animeId);
+        
+        if (!info || info.error || !info.episodes || info.episodes.length === 0) {
+            await deleteMsg(hansaka, from, statusMsg.key);
+            return reply(formatMsg("🔴 *Error*", "මෙම ඇනිමේ එකේ Episodes සොයාගත නොහැක."));
+        }
+
         let epObj = info.episodes.find(e => parseInt(e.number) === epNum);
-        if (!epObj && epNum === 1 && info.episodes.length > 0) epObj = info.episodes[0];
+        if (!epObj && epNum === 1 && info.episodes.length > 0) epObj = info.episodes[0]; // Movie Fallback
+
+        if (!epObj) {
+            await deleteMsg(hansaka, from, statusMsg.key);
+            return reply(formatMsg("🔴 *Error*", `Episode ${epNum} සොයාගත නොහැක.`));
+        }
 
         const sources = await getStreamLink(epObj.id);
         
         if (!sources || sources.length === 0) {
             await deleteMsg(hansaka, from, statusMsg.key);
-            return reply(formatMsg("🔴 *Error*", "මෙම කොටස සඳහා ලින්ක් හමු නොවීය."));
+            return reply(formatMsg("🔴 *Error*", "මෙම කොටස සඳහා බාගත කිරීමේ ලින්ක් හමු නොවීය."));
         }
 
         let buttons = sources.filter(s => s.quality !== 'backup').slice(0, 3).map(s => ({
@@ -221,7 +248,7 @@ cmd({ pattern: "e", filename: __filename }, async (hansaka, mek, m, { from, q, r
             image: img ? { buffer: img } : { url: 'https://i.ibb.co/s93hdn6L/Olya-welcome.png' },
             interactiveButtons: buttons
         });
-    } catch (e) { reply(e.message); }
+    } catch (e) { reply(formatMsg("🔴 *System Error*", e.message)); }
 });
 
 // =============================================
@@ -233,7 +260,6 @@ cmd({ pattern: "d", filename: __filename }, async (hansaka, mek, m, { from, q, r
         let status = await reply(formatMsg("🔄 *Downloading...*", `Episode ${num} (${qual}) බාගත කරමින්...⏳`));
         const sources = await getStreamLink(epId);
         
-        // 🛠️ FIX: Added safety check if stream URL is missing
         const stream = sources.find(s => s.quality === qual)?.url || sources[0]?.url;
         if (!stream) {
             await deleteMsg(hansaka, from, status.key);
@@ -260,5 +286,5 @@ cmd({ pattern: "d", filename: __filename }, async (hansaka, mek, m, { from, q, r
 
         await deleteMsg(hansaka, from, status.key);
         fs.unlinkSync(filePath);
-    } catch (e) { reply(e.message); }
+    } catch (e) { reply(formatMsg("🔴 *System Error*", e.message)); }
 });
