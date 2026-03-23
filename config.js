@@ -8,6 +8,7 @@ function convertToBool(text, fault = 'true') {
 module.exports = {
     SESSION_ID: process.env.SESSION_ID || "",
     ALIVE_IMG: process.env.ALIVE_IMG || path.join(__dirname, 'Assets', 'IMG', 'Alive.png'),
+    ANIME_IMG: process.env.ANIME_IMG || path.join(__dirname, 'Assets', 'IMG', 'anime.png'),
     WELCOME_IMG: process.env.WELCOME_IMG || path.join(__dirname, 'Assets', 'IMG', 'Welcome.png'),
     MENU_IMG: process.env.MENU_IMG || path.join(__dirname, 'Assets', 'IMG', 'Menu.png'),
     ALIVE_MSG: process.env.ALIVE_MSG || "*Hello👋 Olya Assistant Is Alive Now😍*",
