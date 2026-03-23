@@ -12,6 +12,8 @@ const { sendInteractiveMessage } = require('gifted-btns');
 // GLOBAL DESIGNS & FOOTERS
 // =============================================
 const FOOTER_TEXT = "𝓐𝓼𝓼𝓲𝓼𝓽𝓪𝓷𝓽 𝓞𝓵𝔂𝓪 💞🐝";
+const FALLBACK_IMG = 'https://i.ibb.co/s93hdn6L/Olya-welcome.png'; // කිසිම image එකක් නැති වුණොත් පෙන්වන url එක
+
 const formatMsg = (title, body) =>
     `✦ ━━━━━━━━━━━━━━━ ✦\n${title}\n\n${body}\n✦ ━━━━━━━━━━━━━━━ ✦\n\n> ${FOOTER_TEXT}`;
 
@@ -20,7 +22,7 @@ const deleteMsg = async (hansaka, from, key) => {
     try { if (key) await hansaka.sendMessage(from, { delete: key }); } catch (e) {}
 };
 
-// Config Image Buffer
+// Config Image Buffer (ඔයාගේ Config එකේ තියෙන Image එක ගන්නා හැටි)
 const getAnimeImg = () => {
     try {
         if (config.ANIME_IMG && fs.existsSync(config.ANIME_IMG)) return fs.readFileSync(config.ANIME_IMG);
@@ -28,7 +30,7 @@ const getAnimeImg = () => {
     } catch (e) { return null; }
 };
 
-// Safe String Converter (වැදගත්ම කොටස! 🛠️)
+// Safe String Converter
 const safeStr = (val) => {
     if (val === null || val === undefined) return "N/A";
     if (typeof val === 'object') return val.english || val.romaji || val.userPreferred || JSON.stringify(val);
@@ -108,7 +110,8 @@ async (hansaka, mek, m, { from, q, reply }) => {
         await sendInteractiveMessage(hansaka, from, {
             text: `🔍 *SEARCH RESULTS FOR:* ${q}\n\nපහත ලැයිස්තුවෙන් නිවැරදි ඇනිමේ එක තෝරන්න:`,
             footer: FOOTER_TEXT,
-            image: img ? { buffer: img } : { url: results[0].image || 'https://i.ibb.co/s93hdn6L/Olya-welcome.png' },
+            // Config Image එක ඇත්නම් එය මුලින්ම පෙන්වයි
+            image: img ? { buffer: img } : { url: results[0].image || FALLBACK_IMG },
             interactiveButtons: buttons
         });
 
@@ -146,7 +149,13 @@ cmd({ pattern: "ainfo", filename: __filename }, async (hansaka, mek, m, { from, 
         body += `\n\n> 📌 ANID: ${animeId}`;
 
         await deleteMsg(hansaka, from, statusMsg.key);
-        await hansaka.sendMessage(from, { image: { url: info.image }, caption: formatMsg("✅ *Anime Info*", body) }, { quoted: mek });
+        
+        // FIXED: Config Image එක හෝ API Image එක පාවිච්චි කරයි
+        const imgBuffer = getAnimeImg();
+        await hansaka.sendMessage(from, { 
+            image: imgBuffer ? { buffer: imgBuffer } : { url: info.image || FALLBACK_IMG }, 
+            caption: formatMsg("✅ *Anime Info*", body) 
+        }, { quoted: mek });
 
     } catch (e) { reply(formatMsg("🔴 *Error*", e.message)); }
 });
@@ -163,7 +172,17 @@ cmd({ pattern: "c", filename: __filename }, async (hansaka, mek, m, { from, q, r
 
         const statusMsg = await reply(formatMsg("📂 *Loading List...*", "ලැයිස්තුව සකසමින්..."));
         const info = await getEpisodes(animeId);
+        
+        if (!info.episodes || info.episodes.length === 0) {
+            await deleteMsg(hansaka, from, statusMsg.key);
+            return reply(formatMsg("🔴 *Error*", "කොටස් කිසිවක් හමු නොවීය."));
+        }
+
         const chunk = info.episodes.slice((catNum - 1) * 10, catNum * 10);
+        if (chunk.length === 0) {
+            await deleteMsg(hansaka, from, statusMsg.key);
+            return reply(formatMsg("🔴 *Error*", "මෙම කාණ්ඩයට අදාළ දත්ත නොමැත."));
+        }
 
         let body = `📂 *EPISODE LIST (Group ${catNum})*\n\n`;
         chunk.forEach(ep => body += `[ *${ep.number}* ] Episode ${ep.number}\n`);
@@ -171,7 +190,7 @@ cmd({ pattern: "c", filename: __filename }, async (hansaka, mek, m, { from, q, r
 
         await deleteMsg(hansaka, from, statusMsg.key);
         await reply(formatMsg("📜 *Episodes List*", body));
-    } catch (e) { reply(e.message); }
+    } catch (e) { reply(formatMsg("🔴 *Error*", e.message)); }
 });
 
 // =============================================
@@ -186,13 +205,27 @@ cmd({ pattern: "e", filename: __filename }, async (hansaka, mek, m, { from, q, r
 
         const statusMsg = await reply(formatMsg("🔗 *Fetching Links...*", `Episode ${epNum} ලින්ක් සොයමින්...`));
         const info = await getEpisodes(animeId);
+        
         let epObj = info.episodes.find(e => parseInt(e.number) === epNum);
         if (!epObj && epNum === 1 && info.episodes.length > 0) epObj = info.episodes[0];
 
+        if (!epObj) {
+            await deleteMsg(hansaka, from, statusMsg.key);
+            return reply(formatMsg("🔴 *Error*", "මෙම Episode එක හමු නොවීය."));
+        }
+
         const sources = await getStreamLink(epObj.id);
+        if (!Array.isArray(sources) || sources.length === 0) {
+            await deleteMsg(hansaka, from, statusMsg.key);
+            return reply(formatMsg("🔴 *Error*", "Download Links හමු නොවීය."));
+        }
+
         let buttons = sources.filter(s => s.quality !== 'backup').slice(0, 3).map(s => ({
             name: 'quick_reply',
-            buttonParamsJson: JSON.stringify({ display_text: `🎥 ${safeStr(s.quality)}`, id: `.d ${epObj.id}|${safeStr(s.quality)}|${epNum}` })
+            buttonParamsJson: JSON.stringify({ 
+                display_text: `🎥 ${safeStr(s.quality)}`, 
+                id: `.d ${epObj.id}|${safeStr(s.quality)}|${epNum}` 
+            })
         }));
 
         await deleteMsg(hansaka, from, statusMsg.key);
@@ -200,10 +233,10 @@ cmd({ pattern: "e", filename: __filename }, async (hansaka, mek, m, { from, q, r
         await sendInteractiveMessage(hansaka, from, {
             text: `🎬 *Episode ${epNum}*\n\nQuality එක තෝරන්න:`,
             footer: FOOTER_TEXT,
-            image: img ? { buffer: img } : { url: 'https://i.ibb.co/s93hdn6L/Olya-welcome.png' },
+            image: img ? { buffer: img } : { url: FALLBACK_IMG },
             interactiveButtons: buttons
         });
-    } catch (e) { reply(e.message); }
+    } catch (e) { reply(formatMsg("🔴 *Error*", e.message)); }
 });
 
 // =============================================
@@ -213,9 +246,14 @@ cmd({ pattern: "d", filename: __filename }, async (hansaka, mek, m, { from, q, r
     try {
         const [epId, qual, num] = q.split('|');
         let status = await reply(formatMsg("🔄 *Downloading...*", `Episode ${num} (${qual}) බාගත කරමින්...⏳`));
+        
         const sources = await getStreamLink(epId);
-        const stream = sources.find(s => s.quality === qual)?.url || sources[0].url;
+        if (!Array.isArray(sources) || sources.length === 0) {
+            await deleteMsg(hansaka, from, status.key);
+            return reply(formatMsg("🔴 *Error*", "Download Link ලබා ගත නොහැක."));
+        }
 
+        const stream = sources.find(s => s.quality === qual)?.url || sources[0].url;
         const dataDir = path.join(__dirname, '../data');
         if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir);
         const filePath = path.join(dataDir, `temp_${Date.now()}.mp4`);
@@ -236,5 +274,5 @@ cmd({ pattern: "d", filename: __filename }, async (hansaka, mek, m, { from, q, r
 
         await deleteMsg(hansaka, from, status.key);
         fs.unlinkSync(filePath);
-    } catch (e) { reply(e.message); }
+    } catch (e) { reply(formatMsg("🔴 *Error*", e.message)); }
 });
