@@ -11,8 +11,7 @@ const { sendInteractiveMessage } = require('gifted-btns');
 // =============================================
 // GLOBAL DESIGNS & FOOTERS
 // =============================================
-// ඔයාට අවශ්‍ය නම් මේ නම වෙනස් කරගන්න පුළුවන්
-const FOOTER_TEXT = "✨ 𝓔𝓵𝓮𝓰𝓪𝓷𝓽 𝓢𝓮𝓷𝓹𝓪𝓲 𝓞𝓵𝔂𝓪 ✨"; 
+const FOOTER_TEXT = "✨ 𝓔𝓵𝓮𝓰𝓪𝓷𝓽 𝓢𝓮𝓷𝓹𝓪𝓲 𝓞𝓵𝔂𝓪 ✨";
 
 const formatMsg = (title, body) =>
     `✦ ━━━━━━━━━━━━━━━ ✦\n${title}\n\n${body}\n✦ ━━━━━━━━━━━━━━━ ✦\n\n> ${FOOTER_TEXT}`;
@@ -33,47 +32,52 @@ const getAnimeImg = () => {
 // Safe String Converter
 const safeStr = (val) => {
     if (val === null || val === undefined) return "N/A";
-    if (typeof val === 'object') return val.english || val.romaji || val.userPreferred || JSON.stringify(val);
-    return String(val);
+    let str = typeof val === 'object' ? (val.english || val.romaji || val.userPreferred || JSON.stringify(val)) : String(val);
+    return str.replace(/[\n\t]+/g, ' ').trim(); 
 };
 
 // =============================================
-// API FETCHERS
+// API FETCHERS (GOGOANIME ENGINE - THE SURVIVOR 🔥)
 // =============================================
+const BASE_URL = "https://api.consumet.org/anime/gogoanime";
+
 async function searchAnimeList(query) {
-    const url = `https://api.anispace.workers.dev/search/${encodeURIComponent(query)}`;
-    const res = await axios.get(url, { timeout: 15000 });
-    return res.data.results || res.data || [];
+    try {
+        const url = `${BASE_URL}/${encodeURIComponent(query)}`;
+        const res = await axios.get(url, { timeout: 15000 });
+        return res.data.results || [];
+    } catch (e) {
+        console.error("🔴 Consumet Search Error:", e.message);
+        return [];
+    }
 }
 
 async function getEpisodes(animeId) {
     try {
-        const url = `https://api.anispace.workers.dev/anime/${animeId}`;
+        const url = `${BASE_URL}/info/${encodeURIComponent(animeId)}`;
         const res = await axios.get(url, { timeout: 15000 });
-        
-        // 🛠️ API එකෙන් එන නියම දත්ත Terminal එකේ Print කිරීම
-        console.log("🟢 API RESPONSE:", JSON.stringify(res.data).substring(0, 500)); 
-        
-        let data = res.data;
-        if (data && data.results) data = data.results;
-        if (Array.isArray(data)) data = data[0]; 
-        
-        return data || {};
+        return res.data || {};
     } catch (e) {
-        console.error("🔴 API Request Failed:", e.message);
+        console.error("🔴 Consumet Info Error:", e.message);
         return { error: true, message: e.message };
     }
 }
 
 async function getStreamLink(episodeId) {
-    const url = `https://api.anispace.workers.dev/episode/${episodeId}`;
-    const res = await axios.get(url, { timeout: 15000 });
-    return res.data.sources || res.data;
+    try {
+        const url = `${BASE_URL}/watch/${encodeURIComponent(episodeId)}`;
+        const res = await axios.get(url, { timeout: 15000 });
+        return res.data.sources || [];
+    } catch (e) {
+        console.error("🔴 Consumet Stream Error:", e.message);
+        return [];
+    }
 }
 
 function convertToMP4(streamUrl, outputPath) {
     return new Promise((resolve, reject) => {
         ffmpeg(streamUrl)
+            // m3u8 සහ වෙනත් Streaming formats සඳහා අවශ්‍ය Options
             .inputOptions(['-headers', 'User-Agent: Mozilla/5.0\r\n', '-protocol_whitelist', 'file,http,https,tcp,tls,crypto'])
             .outputOptions(['-c copy', '-bsf:a aac_adtstoasc', '-movflags +faststart'])
             .output(outputPath)
@@ -112,6 +116,7 @@ async (hansaka, mek, m, { from, q, reply }) => {
                 name: 'quick_reply',
                 buttonParamsJson: JSON.stringify({ 
                     display_text: titleText.substring(0, 20), 
+                    // Gogoanime වල ID එක කෙලින්ම යවයි (උදා: naruto-shippuden)
                     id: `.ainfo ${safeStr(res.id)}` 
                 })
             };
@@ -151,12 +156,12 @@ cmd({ pattern: "ainfo", filename: __filename }, async (hansaka, mek, m, { from, 
         const episodesArr = Array.isArray(info.episodes) ? info.episodes : [];
         const totalEp = episodesArr.length > 0 ? episodesArr.length : parseInt(info.totalEpisodes || 0);
 
-        let body = `🎬 *${safeStr(info.title || info.name)}*\n\n` +
-                   `🌟 *Rating:* ${info.rating || 'N/A'}\n` +
+        let body = `🎬 *${safeStr(info.title)}*\n\n` +
+                   `📅 *Release Year:* ${info.releaseDate || 'N/A'}\n` +
                    `📺 *Total Episodes:* ${totalEp}\n\n`;
 
         if (episodesArr.length === 0) {
-            body += `⚠️ *දැනට බාගත කිරීමට නොමැත*\nමෙම ඇනිමේ එකේ කොටස් තවම දත්ත ගබඩාවට එක් කර නොමැත (එය තවම විකාශය වී නොමැති එකක් විය හැක).\nකරුණාකර පසුව නැවත උත්සාහ කරන්න.`;
+            body += `⚠️ *දැනට බාගත කිරීමට නොමැත*\nමෙම ඇනිමේ එකේ කොටස් තවම දත්ත ගබඩාවට එක් කර නොමැත.`;
         } else if (episodesArr.length === 1) {
             const singleEpNum = episodesArr[0].number;
             body += `*📂 විස්තරය:*\nමෙය චිත්‍රපටයක් හෝ තනි කොටසකි.\n\n📌 *Download කිරීමට පහත අණ Reply කරන්න:*\n👉 *.ep ${singleEpNum}*`;
@@ -235,7 +240,7 @@ cmd({ pattern: "ep", filename: __filename }, async (hansaka, mek, m, { from, q, 
         const episodesArr = Array.isArray(info.episodes) ? info.episodes : [];
         if (!info || info.error || episodesArr.length === 0) {
             await deleteMsg(hansaka, from, statusMsg?.key);
-            return reply(formatMsg("🔴 *Not Available*", "සමාවෙන්න, මෙම ඇනිමේ එක සඳහා බාගත කිරීමට කොටස් (Episodes) දැනට දත්ත ගබඩාවේ නොමැත. මෙය තවම නිකුත් වී නොමැති එකක් විය හැක. වෙනත් ඇනිමේ එකක් උත්සාහ කරන්න."));
+            return reply(formatMsg("🔴 *Not Available*", "මෙම ඇනිමේ එක සඳහා Episodes සොයාගත නොහැක."));
         }
 
         let epObj = episodesArr.find(e => parseInt(e.number) === epNum);
@@ -246,6 +251,7 @@ cmd({ pattern: "ep", filename: __filename }, async (hansaka, mek, m, { from, q, 
             return reply(formatMsg("🔴 *Error*", `Episode ${epNum} සොයාගත නොහැක.`));
         }
 
+        // Gogoanime වලින් අදාළ Episode එකේ ලින්ක්ස් ගෙන්වා ගැනීම
         const sources = await getStreamLink(epObj.id);
         
         if (!sources || sources.length === 0) {
@@ -283,12 +289,14 @@ cmd({ pattern: "dl", filename: __filename }, async (hansaka, mek, m, { from, q, 
         statusMsg1 = await reply(formatMsg("🔄 *Downloading...*", `Episode ${num} (${qual}) බාගත කරමින්...⏳`));
         const sources = await getStreamLink(epId);
         
-        const stream = sources.find(s => s.quality === qual)?.url || sources[0]?.url;
+        // Quality එකට ගැලපෙන ලින්ක් එක තෝරා ගැනීම
+        const stream = sources.find(s => s.quality === qual)?.url || sources.find(s => s.quality === 'default')?.url || sources[0]?.url;
         if (!stream) {
             await deleteMsg(hansaka, from, statusMsg1?.key);
             return reply(formatMsg("🔴 *Error*", "බාගත කිරීමේ ලින්ක් එක ලබා ගැනීමට නොහැකි විය."));
         }
 
+        // FFMPEG හරහා ලින්ක් එක MP4 බවට පත් කර සර්වර් එකට ගැනීම
         await convertToMP4(stream, filePath);
         await deleteMsg(hansaka, from, statusMsg1?.key);
         
@@ -297,6 +305,7 @@ cmd({ pattern: "dl", filename: __filename }, async (hansaka, mek, m, { from, q, 
         const fileSize = fs.statSync(filePath).size;
         const sizeMB = (fileSize / (1024 * 1024)).toFixed(2);
 
+        // { url: filePath } භාවිතයෙන් Memory Leaks වළක්වා ගනිමින් Upload කිරීම
         await hansaka.sendMessage(from, { 
             document: { url: filePath }, 
             mimetype: 'video/mp4', 
