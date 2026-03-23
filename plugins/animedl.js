@@ -17,7 +17,7 @@ const formatMsg = (title, body) =>
 
 // Message Delete Helper
 const deleteMsg = async (hansaka, from, key) => {
-    try { if (key) await hansaka.sendMessage(from, { delete: key }); } catch (e) {}
+    try { if (key) await hansaka.sendMessage(from, { delete: key }); } catch (e) { console.log("Failed to delete msg:", e.message); }
 };
 
 // Config Image Buffer
@@ -63,7 +63,7 @@ function convertToMP4(streamUrl, outputPath) {
             .outputOptions(['-c copy', '-bsf:a aac_adtstoasc', '-movflags +faststart'])
             .output(outputPath)
             .on('end', () => resolve(true))
-            .on('error', (err) => reject(err))
+            .on('error', (err) => reject(new Error(`FFmpeg Error: ${err.message}`)))
             .run();
     });
 }
@@ -168,7 +168,6 @@ cmd({ pattern: "c", filename: __filename }, async (hansaka, mek, m, { from, q, r
         const catNum = parseInt(q);
         if (isNaN(catNum)) return reply(formatMsg("🔴 *Error*", "කරුණාකර Category අංකය නිවැරදිව ලබා දෙන්න. (උදා: .c 1)"));
 
-        // 🛠️ FIX: Ultra-safe text extraction from quoted message
         const rawText = m.quoted?.text || m.quoted?.caption || m.quoted?.msg?.caption || m.quoted?.message?.imageMessage?.caption || "";
         const animeIdMatch = rawText.match(/ANID:\s*([^\s]+)/);
         const animeId = animeIdMatch ? animeIdMatch[1] : null;
@@ -203,7 +202,6 @@ cmd({ pattern: "e", filename: __filename }, async (hansaka, mek, m, { from, q, r
         const epNum = parseInt(q);
         if (isNaN(epNum)) return reply(formatMsg("🔴 *Error*", "කරුණාකර Episode අංකය නිවැරදිව ලබා දෙන්න. (උදා: .e 1)"));
 
-        // 🛠️ FIX: Ultra-safe text extraction to prevent silent returns
         const rawText = m.quoted?.text || m.quoted?.caption || m.quoted?.msg?.caption || m.quoted?.message?.imageMessage?.caption || "";
         const animeIdMatch = rawText.match(/ANID:\s*([^\s]+)/);
         const animeId = animeIdMatch ? animeIdMatch[1] : null;
@@ -252,39 +250,50 @@ cmd({ pattern: "e", filename: __filename }, async (hansaka, mek, m, { from, q, r
 });
 
 // =============================================
-// 5. DOWNLOADER: .d
+// 5. DOWNLOADER: .d (OPTIMIZED)
 // =============================================
 cmd({ pattern: "d", filename: __filename }, async (hansaka, mek, m, { from, q, reply }) => {
+    let statusMsg1, statusMsg2;
+    const dataDir = path.join(__dirname, '../data');
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir);
+    const filePath = path.join(dataDir, `temp_${Date.now()}.mp4`);
+
     try {
         const [epId, qual, num] = q.split('|');
-        let status = await reply(formatMsg("🔄 *Downloading...*", `Episode ${num} (${qual}) බාගත කරමින්...⏳`));
+        statusMsg1 = await reply(formatMsg("🔄 *Downloading...*", `Episode ${num} (${qual}) බාගත කරමින්...⏳`));
         const sources = await getStreamLink(epId);
         
         const stream = sources.find(s => s.quality === qual)?.url || sources[0]?.url;
         if (!stream) {
-            await deleteMsg(hansaka, from, status.key);
+            await deleteMsg(hansaka, from, statusMsg1.key);
             return reply(formatMsg("🔴 *Error*", "බාගත කිරීමේ ලින්ක් එක ලබා ගැනීමට නොහැකි විය."));
         }
 
-        const dataDir = path.join(__dirname, '../data');
-        if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir);
-        const filePath = path.join(dataDir, `temp_${Date.now()}.mp4`);
-
         await convertToMP4(stream, filePath);
-        await deleteMsg(hansaka, from, status.key);
-        status = await reply(formatMsg("📤 *Uploading...*", `WhatsApp වෙත එවමින් පවතී... 🚀`));
+        await deleteMsg(hansaka, from, statusMsg1.key);
+        
+        statusMsg2 = await reply(formatMsg("📤 *Uploading...*", `WhatsApp වෙත එවමින් පවතී... 🚀`));
 
         const fileSize = fs.statSync(filePath).size;
         const sizeMB = (fileSize / (1024 * 1024)).toFixed(2);
 
+        // 🟢 FIX: Using { url: filePath } to prevent Memory Leaks!
         await hansaka.sendMessage(from, { 
-            document: fs.readFileSync(filePath), 
+            document: { url: filePath }, 
             mimetype: 'video/mp4', 
             fileName: `Anime_Ep${num}.mp4`, 
             caption: formatMsg(`🎬 Episode ${num}`, `Quality: ${qual}\nSize: ${sizeMB} MB`) 
         }, { quoted: mek });
 
-        await deleteMsg(hansaka, from, status.key);
-        fs.unlinkSync(filePath);
-    } catch (e) { reply(formatMsg("🔴 *System Error*", e.message)); }
+        await deleteMsg(hansaka, from, statusMsg2.key);
+
+    } catch (e) { 
+        console.error(e);
+        reply(formatMsg("🔴 *System Error*", e.message)); 
+    } finally {
+        // 🟢 FIX: Guaranteed File Cleanup to prevent Storage Leaks!
+        if (fs.existsSync(filePath)) {
+            try { fs.unlinkSync(filePath); } catch (err) { console.error("Cleanup Error:", err); }
+        }
+    }
 });
