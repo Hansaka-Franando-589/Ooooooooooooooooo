@@ -8,6 +8,10 @@ ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 const config = require('../config');
 const { sendInteractiveMessage } = require('gifted-btns');
 
+// 🔥 අපේම Native Engine එක (No Blocks, No 451 Errors)
+const { ANIME } = require('@consumet/extensions');
+const gogoanime = new ANIME.Gogoanime();
+
 // =============================================
 // GLOBAL DESIGNS & FOOTERS
 // =============================================
@@ -26,16 +30,15 @@ const safeStr = (val) => {
 };
 
 // =============================================
-// API FETCHERS (HYBRID: JIKAN + MIRROR) 🔥
+// API FETCHERS (HYBRID: JIKAN + NATIVE GOGOANIME) 🔥
 // =============================================
-const MIRROR_URL = "https://consumet-api-clone.vercel.app/anime/gogoanime";
 
 // 1. Jikan API (100% Stable Search)
 async function searchAnimeList(query) {
     try {
         const { data } = await axios.get(`https://api.jikan.moe/v4/anime?q=${encodeURIComponent(query)}&limit=5`, { timeout: 15000 });
         return data.data.map(a => ({
-            id: a.title, // Jikan Title එක Mirror Search එකට යැවීමට ගනී
+            id: a.title, // Jikan Title එක Gogo Search එකට යැවීමට ගනී
             title: a.title,
             image: a.images?.jpg?.large_image_url || 'https://i.ibb.co/s93hdn6L/Olya-welcome.png'
         }));
@@ -45,37 +48,39 @@ async function searchAnimeList(query) {
     }
 }
 
-// 2. Info & Episodes (Mirror)
-async function getAnimeInfoFromMirror(animeTitle) {
+// 2. Info & Episodes (Native Local Engine)
+async function getAnimeInfoNative(animeTitle) {
     try {
-        const searchRes = await axios.get(`${MIRROR_URL}/${encodeURIComponent(animeTitle)}`, { timeout: 15000 });
-        const bestMatch = searchRes.data.results?.[0];
-        if (!bestMatch) return { error: true, message: "Mirror එකෙහි මෙය හමු නොවීය." };
+        // Gogoanime සර්ච් එකට ගැලපෙන්න නමේ තියෙන විශේෂ අකුරු අයින් කිරීම
+        const cleanTitle = animeTitle.replace(/[^a-zA-Z0-9 ]/g, " ").trim();
+        const searchRes = await gogoanime.search(cleanTitle);
+        const bestMatch = searchRes.results?.[0];
+        
+        if (!bestMatch) return { error: true, message: "මෙම ඇනිමේ එක Gogoanime හි හමු නොවීය." };
 
-        const infoRes = await axios.get(`${MIRROR_URL}/info/${bestMatch.id}`, { timeout: 15000 });
-        return infoRes.data || { error: true };
+        const info = await gogoanime.fetchAnimeInfo(bestMatch.id);
+        return info || { error: true };
     } catch (e) {
-        console.error("🔴 Mirror Info Error:", e.message);
+        console.error("🔴 Native Info Error:", e.message);
         return { error: true, message: e.message };
     }
 }
 
-// 3. Episodes by ID (Mirror)
+// 3. Episodes by ID (Native)
 async function getEpisodesById(gogoId) {
     try {
-        const infoRes = await axios.get(`${MIRROR_URL}/info/${gogoId}`, { timeout: 15000 });
-        return infoRes.data || { error: true };
+        const info = await gogoanime.fetchAnimeInfo(gogoId);
+        return info || { error: true };
     } catch (e) {
         return { error: true, message: e.message };
     }
 }
 
-// 4. Stream Links (Mirror)
+// 4. Stream Links (Native)
 async function getStreamLink(episodeId) {
     try {
-        const url = `${MIRROR_URL}/watch/${encodeURIComponent(episodeId)}`;
-        const { data } = await axios.get(url, { timeout: 15000 });
-        return data.sources || [];
+        const res = await gogoanime.fetchEpisodeSources(episodeId);
+        return res.sources || [];
     } catch (e) {
         console.error("🔴 Stream Error:", e.message);
         return [];
@@ -133,7 +138,7 @@ cmd({ pattern: "ainfo", filename: __filename }, async (hansaka, mek, m, { from, 
         const animeTitle = q.trim();
         const statusMsg = await reply(formatMsg("📋 *Loading Info...*", "ඇනිමේ විස්තර ලබාගනිමින් පවතී..."));
 
-        const info = await getAnimeInfoFromMirror(animeTitle);
+        const info = await getAnimeInfoNative(animeTitle);
         if (!info || info.error) {
             await deleteMsg(hansaka, from, statusMsg.key);
             return reply(formatMsg("🔴 *Error*", "මෙම ඇනිමේ එක ඩවුන්ලෝඩ් කිරීමට නොමැත."));
@@ -143,7 +148,7 @@ cmd({ pattern: "ainfo", filename: __filename }, async (hansaka, mek, m, { from, 
         let body = `🎬 *${safeStr(info.title)}*\n📅 *Release:* ${info.releaseDate || 'N/A'}\n📺 *Episodes:* ${eps.length}\n\n📌 *EPISODE LIST*\n`;
 
         eps.slice(0, 10).forEach(e => body += `[ *${e.number}* ] Ep ${e.number}\n`);
-        body += `\n📌 *.ep <අංකය>* ලෙස Reply කරන්න.\n\n> 📌 ANID: ${info.id}`; // INFO.ID (Gogo ID) එක සේව් කරයි
+        body += `\n📌 *.ep <අංකය>* ලෙස Reply කරන්න.\n\n> 📌 ANID: ${info.id}`;
 
         await deleteMsg(hansaka, from, statusMsg.key);
         await hansaka.sendMessage(from, { image: { url: info.image }, caption: formatMsg("✅ *Anime Info*", body) }, { quoted: mek });
