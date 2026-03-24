@@ -208,7 +208,7 @@ const downloadStream = (url, outputPath) => {
 };
 
 // =============================================
-// BOT COMMANDS (FIXED PARAMETERS)
+// BOT COMMANDS (FINAL JID FIX)
 // =============================================
 
 // 1. Search Anime
@@ -218,14 +218,17 @@ cmd({
     desc: "Search for an anime",
     category: "anime",
     react: "🎬"
-}, async (hansaka, mek, m, { from, q, reply }) => {
+}, async (hansaka, mek, m, { q, reply }) => {
     if (!q) return reply(formatMsg("Missing Input", "Please provide an anime name!\nExample: .anime Naruto"));
     try {
-        let loadingMsg = await hansaka.sendMessage(from, { text: "Searching for details... 🕵️‍♂️" }, { quoted: mek });
+        // නිවැරදිව Chat ID එක ලබා ගැනීම
+        const jid = m.chat || mek.key.remoteJid;
+        
+        let loadingMsg = await hansaka.sendMessage(jid, { text: "Searching for details... 🕵️‍♂️" }, { quoted: mek });
         
         const results = await searchAnimeList(q);
         if (!results || results.length === 0) {
-            await deleteMsg(hansaka, from, loadingMsg.key);
+            await deleteMsg(hansaka, jid, loadingMsg.key);
             return reply(formatMsg("Not Found", "No results found for your query."));
         }
         
@@ -237,8 +240,8 @@ cmd({
         });
         listText += "Use *.episodes <ID>* to get the episode list.";
         
-        await deleteMsg(hansaka, from, loadingMsg.key);
-        await hansaka.sendMessage(from, { image: { url: results[0].image }, caption: formatMsg("Anime Search Results", listText) }, { quoted: mek });
+        await deleteMsg(hansaka, jid, loadingMsg.key);
+        await hansaka.sendMessage(jid, { image: { url: results[0].image }, caption: formatMsg("Anime Search Results", listText) }, { quoted: mek });
         
     } catch (e) {
         console.error("Anime Command Error:", e);
@@ -253,14 +256,15 @@ cmd({
     desc: "Get episodes of an anime",
     category: "anime",
     react: "📑"
-}, async (hansaka, mek, m, { from, q, reply }) => {
+}, async (hansaka, mek, m, { q, reply }) => {
     if (!q) return reply(formatMsg("Missing Input", "Please provide an Anime ID!\nExample: .episodes naruto-shippuden-502"));
     try {
-        let loadingMsg = await hansaka.sendMessage(from, { text: "Fetching episodes... ⏳" }, { quoted: mek });
+        const jid = m.chat || mek.key.remoteJid;
+        let loadingMsg = await hansaka.sendMessage(jid, { text: "Fetching episodes... ⏳" }, { quoted: mek });
         
         const data = await getEpisodes(q);
         if (data.error || !data.episodes || data.episodes.length === 0) {
-            await deleteMsg(hansaka, from, loadingMsg.key);
+            await deleteMsg(hansaka, jid, loadingMsg.key);
             return reply(formatMsg("Error", "Could not fetch episodes for this ID."));
         }
         
@@ -274,8 +278,8 @@ cmd({
         if (data.episodes.length > 20) epText += `_...and ${data.episodes.length - 20} more episodes._\n\n`;
         epText += "Use *.watch <Episode_ID>* to get the video.";
         
-        await deleteMsg(hansaka, from, loadingMsg.key);
-        await hansaka.sendMessage(from, { image: { url: data.image }, caption: formatMsg("Episode List", epText) }, { quoted: mek });
+        await deleteMsg(hansaka, jid, loadingMsg.key);
+        await hansaka.sendMessage(jid, { image: { url: data.image }, caption: formatMsg("Episode List", epText) }, { quoted: mek });
         
     } catch (e) {
         console.error("Episodes Command Error:", e);
@@ -290,15 +294,16 @@ cmd({
     desc: "Download and send the episode video directly",
     category: "anime",
     react: "🎥"
-}, async (hansaka, mek, m, { from, q, reply }) => {
+}, async (hansaka, mek, m, { q, reply }) => {
     if (!q) return reply(formatMsg("Missing Input", "Please provide an Episode ID!\nExample: .watch naruto-episode-1"));
     let loadingMsg, tempFilePath;
     try {
-        loadingMsg = await hansaka.sendMessage(from, { text: "Extracting stream links... 🔐" }, { quoted: mek });
+        const jid = m.chat || mek.key.remoteJid;
+        loadingMsg = await hansaka.sendMessage(jid, { text: "Extracting stream links... 🔐" }, { quoted: mek });
         
         const sources = await getStreamLink(q);
         if (!sources || sources.length === 0) {
-            await deleteMsg(hansaka, from, loadingMsg.key);
+            await deleteMsg(hansaka, jid, loadingMsg.key);
             return reply(formatMsg("Error", "Could not extract streaming links for this episode."));
         }
 
@@ -309,12 +314,12 @@ cmd({
         if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir);
         tempFilePath = path.join(tempDir, `anime_${Date.now()}.mp4`);
 
-        await hansaka.sendMessage(from, { text: `Downloading video (${quality})... Please wait, this might take a minute! ⏳` }, { edit: loadingMsg.key });
+        await hansaka.sendMessage(jid, { text: `Downloading video (${quality})... Please wait, this might take a minute! ⏳` }, { edit: loadingMsg.key });
 
         await downloadStream(streamUrl, tempFilePath);
-        await hansaka.sendMessage(from, { text: "Uploading to WhatsApp... 🚀" }, { edit: loadingMsg.key });
+        await hansaka.sendMessage(jid, { text: "Uploading to WhatsApp... 🚀" }, { edit: loadingMsg.key });
 
-        await hansaka.sendMessage(from, { 
+        await hansaka.sendMessage(jid, { 
             document: fs.readFileSync(tempFilePath), 
             mimetype: 'video/mp4',
             fileName: `${q} [${quality}].mp4`,
@@ -322,12 +327,13 @@ cmd({
         }, { quoted: mek });
 
         if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-        await deleteMsg(hansaka, from, loadingMsg.key);
+        await deleteMsg(hansaka, jid, loadingMsg.key);
 
     } catch (e) {
         console.error("Watch Command Error:", e);
+        const jid = m.chat || mek.key.remoteJid;
         if (tempFilePath && fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-        if (loadingMsg) await deleteMsg(hansaka, from, loadingMsg.key);
+        if (loadingMsg) await deleteMsg(hansaka, jid, loadingMsg.key);
         reply(formatMsg("Error", "An error occurred while downloading the video. The file might be too large or the stream is broken."));
     }
 });
