@@ -172,9 +172,14 @@ cmd({
     if (!numMatches) return;
     let num = parseInt(numMatches[numMatches.length - 1]);
     if (isNaN(num)) return;
+    
+    console.log(`[AnimeDL] Active Session Found for ${from}. User selected: ${num}. Step: ${session.step}`);
 
     if (session.step === 1) {
         if (num < 1 || num > session.seriesNames.length) return reply("✦ ━━━━━━━━━━━━━ ✦\n❌ *අවලංගු අංකයකි*\n✦ ━━━━━━━━━━━━━ ✦");
+        
+        await hansaka.sendMessage(from, { react: { text: "⏳", key: mek.key } }).catch(()=>{});
+        console.log(`[AnimeDL] Step 1 accepted. Selected Series: ${session.seriesNames[num - 1]}`);
         
         clearTimeout(session.timer);
         session.timer = setTimeout(() => { delete userAnimeSessions[from]; if(session.client) session.client.disconnect(); }, 5 * 60 * 1000);
@@ -184,40 +189,44 @@ cmd({
         session.episodes = session.groups[selectedName].sort((a, b) => a.name.localeCompare(b.name));
         session.step = 2;
 
-        try {
-            let res = await axios.get(`https://api.jikan.moe/v4/anime?q=${encodeURIComponent(selectedName)}&limit=1`);
-            let syn = "Synopsis details currently unavailable in the database.";
-            if (res.data && res.data.data && res.data.data.length > 0) {
-                if (res.data.data[0].synopsis) {
-                    syn = res.data.data[0].synopsis.split('\n')[0].substring(0, 100);
+        // Background TTS Generation to prevent hanging
+        (async () => {
+            try {
+                const jikanReq = axios.get(`https://api.jikan.moe/v4/anime?q=${encodeURIComponent(selectedName)}&limit=1`, { timeout: 8000 });
+                let res = await jikanReq.catch(() => null);
+                let syn = "Synopsis details currently unavailable in the database.";
+                if (res && res.data && res.data.data && res.data.data.length > 0) {
+                    if (res.data.data[0].synopsis) {
+                        syn = res.data.data[0].synopsis.split('\n')[0].substring(0, 100);
+                    }
                 }
-            }
-            
-            let textToSpeak = `Hello. I am Olya Assistant by Hansaka Fernando. Data Retrieval initiated. ${syn}`;
-            let audioUrl = googleTTS.getAudioUrl(textToSpeak, { lang: 'en', slow: false });
-            
-            let tDir = path.join(__dirname, '../temp');
-            if(!fs.existsSync(tDir)) fs.mkdirSync(tDir);
-            let tIn = path.join(tDir, `tin_${Date.now()}.mp3`);
-            let tOut = path.join(tDir, `tout_${Date.now()}.mp3`);
-            
-            let audData = await axios.get(audioUrl, { responseType: 'arraybuffer' });
-            fs.writeFileSync(tIn, audData.data);
-            
-            let cmdStr = `ffmpeg -y -i "${tIn}" -f lavfi -i "sine=f=120" -filter_complex "[0:a]tremolo=f=10:d=0.5,flanger=delay=5:depth=2[v];[1:a]volume=0.03[bg];[v][bg]amix=inputs=2:duration=first" "${tOut}"`;
-            
-            await new Promise((res) => exec(cmdStr, res));
-            
-            if (fs.existsSync(tOut)) {
-                await hansaka.sendMessage(from, { audio: fs.readFileSync(tOut), mimetype: 'audio/mp4', ptt: true }, { quoted: mek });
-                fs.unlinkSync(tOut);
-            } else if (fs.existsSync(tIn)) {
-                await hansaka.sendMessage(from, { audio: fs.readFileSync(tIn), mimetype: 'audio/mp4', ptt: true }, { quoted: mek });
-            }
-            if (fs.existsSync(tIn)) fs.unlinkSync(tIn);
-            
-        } catch(e) { console.error("Robotic Voice Err:", e); }
+                
+                let textToSpeak = `Hello. I am Olya Assistant by Hansaka Fernando. Data Retrieval initiated. ${syn}`;
+                let audioUrl = googleTTS.getAudioUrl(textToSpeak, { lang: 'en', slow: false });
+                
+                let tDir = path.join(__dirname, '../temp');
+                if(!fs.existsSync(tDir)) fs.mkdirSync(tDir);
+                let tIn = path.join(tDir, `tin_${Date.now()}.mp3`);
+                let tOut = path.join(tDir, `tout_${Date.now()}.mp3`);
+                
+                let audData = await axios.get(audioUrl, { responseType: 'arraybuffer', timeout: 8000 });
+                fs.writeFileSync(tIn, audData.data);
+                
+                let cmdStr = `ffmpeg -y -i "${tIn}" -f lavfi -i "sine=f=120" -filter_complex "[0:a]tremolo=f=10:d=0.5,flanger=delay=5:depth=2[v];[1:a]volume=0.03[bg];[v][bg]amix=inputs=2:duration=first" "${tOut}"`;
+                
+                await new Promise((res) => exec(cmdStr, res));
+                
+                if (fs.existsSync(tOut)) {
+                    await hansaka.sendMessage(from, { audio: fs.readFileSync(tOut), mimetype: 'audio/mp4', ptt: true }, { quoted: mek });
+                    fs.unlinkSync(tOut);
+                } else if (fs.existsSync(tIn)) {
+                    await hansaka.sendMessage(from, { audio: fs.readFileSync(tIn), mimetype: 'audio/mp4', ptt: true }, { quoted: mek });
+                }
+                if (fs.existsSync(tIn)) fs.unlinkSync(tIn);
+            } catch(e) { console.error("Robotic Voice Err:", e.message); }
+        })();
 
+        console.log(`[AnimeDL] Sending Chunk Selection...`);
         await sendChunkSelection(hansaka, from, session, mek);
         return;
     }
