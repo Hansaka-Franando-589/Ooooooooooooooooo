@@ -15,7 +15,7 @@ const apiId = 36884998;
 const apiHash = "c49aa7cecc8079e252f4c49379790700";
 const sessionString = "1BQANOTEuMTA4LjU2LjEzMwG7oq1HrH2MdLQ5wZTQljax6swwg7BnveLkiznbkkHyS5TXAOaoi0U5qlUGCVRuSUuTnSIINgSLHCkL4NKEZC1bzb9B7QksWgwXYgl836NfYRsyGCVNhrmx5Zd3/jZZE/Q17NxyIAKwvVfTVoGh0jseQNCTLyhQ/3aRj+RgF/Ogjq/anUpelwJNDP2bIq7yF9GzruEqpA1UnUTAMbIsQFe7GvR9ZhXXfecMSwiW2qjNoJ0CKb10QO4fYqlm3fzvPp5AlrDfSVlQG2MPRpKRoy8rdGGfQ9pUMr8yQ3eGTiepQP3g6+T7pPnLfUpEQOl4bo1ZBFbeIhta0FnY7NyTcV/PsQ=="; 
 const stringSession = new StringSession(sessionString);
-const TARGET_CHANNEL = "@animehub6"; // <--- මේක ඔයාගේ චැනල් එකේ නමට වෙනස් කරන්න
+const TARGET_CHANNEL = "@animehub6";
 
 // =============================================
 // HELPER FUNCTIONS
@@ -39,7 +39,7 @@ const getSeriesName = (filename) => {
 // =============================================
 // SESSION MANAGEMENT
 // =============================================
-const userAnimeSessions = {}; // { jid: { step, ... } }
+const userAnimeSessions = {};
 
 // =============================================
 // SEARCH COMMAND
@@ -51,12 +51,22 @@ cmd({
     category: "anime",
     react: "🕵️‍♀️"
 }, async (hansaka, mek, m, { from, q, reply }) => {
-    if (!q) return reply("> ❗ *කරුණාකර ඔබට අවශ්‍ය ඇනිමෙ (Anime) එකෙහි නම ලබා දෙන්න...*\n> උදාහරණ: `.anime naruto`");
+    if (!q) return reply("✦ ━━━━━━━━━━━━━ ✦\n❗ *කරුණාකර ඔබට අවශ්‍ය ඇනිමෙ (Anime) එකෙහි නම ලබා දෙන්න...*\n> උදාහරණ: .anime naruto\n✦ ━━━━━━━━━━━━━ ✦");
     
     if (userAnimeSessions[from]) clearTimeout(userAnimeSessions[from].timer);
 
     let uName = m.pushName || "පරිශීලක";
-    let loadTxt = `> [ පද්ධති ආරම්භය ]\n> 👤 පරිශීලක: ${uName}\n> 🔍 සෙවුම් පරාමිතිය: '${q}'\n\n> ඕල්යා මූලික දත්ත ගබඩාව (Olya Main Datacenter) සමඟ සම්බන්ධ වෙමින් පවතී. කරුණාකර පද්ධති විශ්ලේෂණය අවසන් වනතුරු රැඳී සිටින්න... ⚙️`;
+    let loadTxt = `✦ ━━━━━━━━━━━━━━━ ✦
+     *⚙️ System Analysis*
+✦ ━━━━━━━━━━━━━━━ ✦
+
+👤 *පරිශීලක:* ${uName}
+🔍 *සෙවුම් පරාමිතිය:* '${q}'
+
+ඕල්යා මූලික දත්ත ගබඩාව (Olya Main Datacenter) සමඟ සම්බන්ධ වෙමින් පවතී. කරුණාකර පද්ධති විශ්ලේෂණය අවසන් වනතුරු රැඳී සිටින්න... ⚙️
+
+> 🧚‍♀️ 𝒫𝑜𝓌𝑒𝓇𝑒𝒹 𝐵𝓎 𝒪𝐿𝒴𝒜 𝒮𝑒𝓇𝓋𝑒𝓇`;
+
     let loadingMsg = await hansaka.sendMessage(from, { text: loadTxt }, { quoted: mek });
     
     let client;
@@ -64,7 +74,6 @@ cmd({
         client = new TelegramClient(stringSession, apiId, apiHash, { connectionRetries: 5 });
         await client.connect();
 
-        // චැනල් එකේ සර්ච් කිරීම (Timeout දෝෂ මඟහැරීම සඳහා Limit එක 40 කට අඩු කර, Filter එක ඉවත් කළා)
         const messages = await client.getMessages(TARGET_CHANNEL, {
             search: q,
             limit: 40
@@ -72,7 +81,8 @@ cmd({
 
         if (messages.length === 0) {
             await client.disconnect();
-            return hansaka.sendMessage(from, { text: "> ⚠️ [ දෝෂයකි: ගැලපීම් නොමැත ]\n> දත්ත ගබඩාව තුළ අදාළ සෙවුම් පරාමිතියට (Search Parameter) ගැලපෙන ප්‍රතිඵල හමු නොවිණි. කරුණාකර වෙනත් නාමයක් ලබා දී පද්ධතිය නැවත ක්‍රියාත්මක කරන්න.", edit: loadingMsg.key });
+            let errTxt = `✦ ━━━━━━━━━━━━━ ✦\n⚠️ *දෝෂයකි: ගැලපීම් නොමැත*\n✦ ━━━━━━━━━━━━━ ✦\n\nදත්ත ගබඩාව තුළ අදාළ සෙවුම් පරාමිතියට (Search Parameter) ගැලපෙන ප්‍රතිඵල හමු නොවිණි. කරුණාකර වෙනත් නාමයක් ලබා දී පද්ධතිය නැවත ක්‍රියාත්මක කරන්න.\n\n> 🧚‍♀️ 𝒫𝑜𝓌𝑒𝓇𝑒𝒹 𝐵𝓎 𝒪𝐿𝒴𝒜 𝒮𝑒𝓇𝓋𝑒𝓇`;
+            return hansaka.sendMessage(from, { text: errTxt, edit: loadingMsg.key });
         }
 
         let episodes = [];
@@ -92,7 +102,8 @@ cmd({
 
         if (episodes.length === 0) {
             await client.disconnect();
-            return hansaka.sendMessage(from, { text: "> ⚠️ [ දෝෂයකි: ගොනු නොමැත ]\n> අදාළ නාමයට ගැලපෙන වලංගු වීඩියෝ ගොනු කිසිවක් සේවාදායකයේ හමු නොවීය.", edit: loadingMsg.key });
+            let errTxt = `✦ ━━━━━━━━━━━━━ ✦\n⚠️ *දෝෂයකි: ගොනු නොමැත*\n✦ ━━━━━━━━━━━━━ ✦\n\nඅදාළ නාමයට ගැලපෙන වලංගු වීඩියෝ ගොනු කිසිවක් සේවාදායකයේ හමු නොවීය.\n\n> 🧚‍♀️ 𝒫𝑜𝓌𝑒𝓇𝑒𝒹 𝐵𝓎 𝒪𝐿𝒴𝒜 𝒮𝑒𝓇𝓋𝑒𝓇`;
+            return hansaka.sendMessage(from, { text: errTxt, edit: loadingMsg.key });
         }
 
         let groups = {};
@@ -122,17 +133,26 @@ cmd({
              return await sendChunkSelection(hansaka, from, userAnimeSessions[from], mek);
         }
 
-        let listText = `> [ ප්‍රතිඵල ජනනය විය ]\n> 📊 දත්ත ගබඩාවෙන් ලබාගත් ගැලපෙන කතා මාලාවන් පහත දැක්වේ.\n> ⏳ ඊළඟ පියවර සඳහා අවශ්‍ය කතාමාලාවේ *අංකය* (Index Number) පද්ධතිය වෙත Reply කරන්න.\n\n`;
+        let listText = `✦ ━━━━━━━━━━━━━━━ ✦
+      *📊 Query Results*
+✦ ━━━━━━━━━━━━━━━ ✦
+
+දත්ත ගබඩාවෙන් ලබාගත් ගැලපෙන කතා මාලාවන් පහත දැක්වේ. 
+ඊළඟ පියවර සඳහා අවශ්‍ය කතාමාලාවේ *අංකය* (Index Number) පද්ධතිය වෙත Reply කරන්න. 👇
+
+`;
         seriesNames.forEach((name, idx) => {
-            listText += `${idx + 1}️⃣ ${name}\n`;
+            listText += `*${idx + 1}️⃣* ${name}\n`;
         });
         
+        listText += `\n> 🧚‍♀️ 𝒫𝑜𝓌𝑒𝓇𝑒𝒹 𝐵𝓎 𝒪𝐿𝒴𝒜 𝒮𝑒𝓇𝓋𝑒𝓇`;
         await hansaka.sendMessage(from, { text: listText, edit: loadingMsg.key });
         
     } catch(e) {
         console.error("Anime Search Error:", e);
         if (client) await client.disconnect();
-        hansaka.sendMessage(from, { text: "> ⚠️ [ පද්ධති දෝෂයකි ]\n> දත්ත සෙවීමේදී අභ්‍යන්තර දෝෂයක් හටගැනිණි. කරුණාකර පසුව නැවත උත්සාහ කරන්න.", edit: loadingMsg?.key });
+        let crashTxt = `✦ ━━━━━━━━━━━━━ ✦\n⚠️ *පද්ධති දෝෂයකි*\n✦ ━━━━━━━━━━━━━ ✦\n\nදත්ත සෙවීමේදී අභ්‍යන්තර දෝෂයක් හටගැනිණි. කරුණාකර පසුව නැවත උත්සාහ කරන්න.\n\n> 🧚‍♀️ 𝒫𝑜𝓌𝑒𝓇𝑒𝒹 𝐵𝓎 𝒪𝐿𝒴𝒜 𝒮𝑒𝓇𝓋𝑒𝓇`;
+        hansaka.sendMessage(from, { text: crashTxt, edit: loadingMsg?.key });
     }
 });
 
@@ -147,12 +167,14 @@ cmd({
     const session = userAnimeSessions[from];
     if (!session || !body) return;
 
-    let num = parseInt(body.trim());
-    if (isNaN(num)) return; 
+    // Advanced search: extract the last valid number in the text block (handles message copy-pasting)
+    let numMatches = body.match(/\d+/g);
+    if (!numMatches) return;
+    let num = parseInt(numMatches[numMatches.length - 1]);
+    if (isNaN(num)) return;
 
-    // Step 1: User replies with Series Number
     if (session.step === 1) {
-        if (num < 1 || num > session.seriesNames.length) return reply("❌ [ දෝෂයකි: අවලංගු අංකයකි ]");
+        if (num < 1 || num > session.seriesNames.length) return reply("✦ ━━━━━━━━━━━━━ ✦\n❌ *අවලංගු අංකයකි*\n✦ ━━━━━━━━━━━━━ ✦");
         
         clearTimeout(session.timer);
         session.timer = setTimeout(() => { delete userAnimeSessions[from]; if(session.client) session.client.disconnect(); }, 5 * 60 * 1000);
@@ -162,7 +184,6 @@ cmd({
         session.episodes = session.groups[selectedName].sort((a, b) => a.name.localeCompare(b.name));
         session.step = 2;
 
-        // Robotic TTS Voice Note Generation
         try {
             let res = await axios.get(`https://api.jikan.moe/v4/anime?q=${encodeURIComponent(selectedName)}&limit=1`);
             let syn = "Synopsis details currently unavailable in the database.";
@@ -172,10 +193,11 @@ cmd({
                 }
             }
             
-            let textToSpeak = `Hello. I am Olya Assistant by Hansaaka Fernando. Data Retrieval initiated. ${syn}`;
+            let textToSpeak = `Hello. I am Olya Assistant by Hansaka Fernando. Data Retrieval initiated. ${syn}`;
             let audioUrl = googleTTS.getAudioUrl(textToSpeak, { lang: 'en', slow: false });
             
             let tDir = path.join(__dirname, '../temp');
+            if(!fs.existsSync(tDir)) fs.mkdirSync(tDir);
             let tIn = path.join(tDir, `tin_${Date.now()}.mp3`);
             let tOut = path.join(tDir, `tout_${Date.now()}.mp3`);
             
@@ -200,10 +222,9 @@ cmd({
         return;
     }
 
-    // Step 2: User replies with Chunk Number
     if (session.step === 2) {
         let maxChunks = Math.ceil(session.episodes.length / 10);
-        if (num < 1 || num > maxChunks) return reply("❌ [ දෝෂයකි: අවලංගු කාණ්ඩ අංකයකි ]");
+        if (num < 1 || num > maxChunks) return reply("✦ ━━━━━━━━━━━━━ ✦\n❌ *අවලංගු කාණ්ඩ අංකයකි*\n✦ ━━━━━━━━━━━━━ ✦");
 
         clearTimeout(session.timer);
         session.timer = setTimeout(() => { delete userAnimeSessions[from]; if(session.client) session.client.disconnect(); }, 5 * 60 * 1000);
@@ -213,19 +234,25 @@ cmd({
         session.currentChunk = pagedEpisodes;
         session.step = 3;
 
-        let listText = `> [ කාණ්ඩ විශ්ලේෂණය සාර්ථකයි ]\n> තෝරාගත් කාණ්ඩයට අදාළ වීඩියෝ ගොනු ලැයිස්තුව පහත දැක්වේ.\n> 📥 බාගත කරගැනීම සඳහා අදාළ ගොනුවේ *දර්ශක අංකය (Index)* පද්ධතිය වෙත Reply කරන්න.\n\n`;
+        let listText = `✦ ━━━━━━━━━━━━━━━ ✦
+   *📥 Episode Selection*
+✦ ━━━━━━━━━━━━━━━ ✦
+
+තෝරාගත් කාණ්ඩයට අදාළ වීඩියෝ ගොනු ලැයිස්තුව පහත දැක්වේ. බාගත කරගැනීම සඳහා අදාළ ගොනුවේ *අංකය* (Index Number) පද්ධතිය වෙත Reply කරන්න. 👇
+
+`;
         pagedEpisodes.forEach((ep, idx) => {
-            listText += `${idx + 1}️⃣ ${ep.name.replace(/\.[^/.]+$/, "")} - (${formatSize(ep.size)})\n`;
+            listText += `*${idx + 1}️⃣* ${ep.name.replace(/\.[^/.]+$/, "")} - (${formatSize(ep.size)})\n`;
         });
+        listText += `\n> 🧚‍♀️ 𝒫𝑜𝓌𝑒𝓇𝑒𝒹 𝐵𝓎 𝒪𝐿𝒴𝒜 𝒮𝑒𝓇𝓋𝑒𝓇`;
 
         await hansaka.sendMessage(from, { react: { text: "🎬", key: mek.key } });
         await hansaka.sendMessage(from, { text: listText }, { quoted: mek });
         return;
     }
 
-    // Step 3: User replies with Episode number within chunk
     if (session.step === 3) {
-        if (num < 1 || num > session.currentChunk.length) return reply("❌ [ දෝෂයකි: අවලංගු එපිසෝඩ් අංකයකි ]");
+        if (num < 1 || num > session.currentChunk.length) return reply("✦ ━━━━━━━━━━━━━ ✦\n❌ *අවලංගු වීඩියෝ අංකයකි*\n✦ ━━━━━━━━━━━━━ ✦");
 
         let selectedEp = session.currentChunk[num - 1];
         let client = session.client;
@@ -240,14 +267,24 @@ cmd({
 // =============================================
 async function sendChunkSelection(hansaka, from, session, mek) {
     let epCount = session.episodes.length;
-    let listText = `> [ කතාමාලාව තහවුරු කරන ලදී ]\n> 🎬 තෝරාගත් මාලාව: '${session.selectedSeries}'\n> 📂 මුළු ගොනු ගණන: ${epCount}\n\n> දත්ත පහසුවෙන් ලබාදීම සඳහා පද්ධතිය විසින් ගොනු කාණ්ඩගත (Categorized) කර ඇත. කරුණාකර ඔබට අවශ්‍ය එපිසෝඩ් කාණ්ඩයේ *අංකය* Reply කරන්න.\n\n`;
+    let listText = `✦ ━━━━━━━━━━━━━━━ ✦
+   *🎬 Series Confirmed*
+✦ ━━━━━━━━━━━━━━━ ✦
+
+📌 *තෝරාගත් මාලාව:* ${session.selectedSeries}
+📂 *මුළු ගොනු ගණන:* ${epCount}
+
+දත්ත පහසුවෙන් ලබාදීම සඳහා පද්ධතිය විසින් ගොනු කාණ්ඩගත (Categorized) කර ඇත. කරුණාකර ඔබට අවශ්‍ය එපිසෝඩ් කාණ්ඩයේ *අංකය* Reply කරන්න. 👇
+
+`;
     
     let chunkIdx = 1;
     for (let i = 0; i < epCount; i += 10) {
         let end = Math.min(i + 10, epCount);
-        listText += `${chunkIdx}️⃣ එපිසෝඩ් ${i + 1} සිට ${end} දක්වා\n`;
+        listText += `*${chunkIdx}️⃣* එපිසෝඩ් ${i + 1} සිට ${end} දක්වා\n`;
         chunkIdx++;
     }
+    listText += `\n> 🧚‍♀️ 𝒫𝑜𝓌𝑒𝓇𝑒𝒹 𝐵𝓎 𝒪𝐿𝒴𝒜 𝒮𝑒𝓇𝓋𝑒𝓇`;
 
     if (mek) await hansaka.sendMessage(from, { react: { text: "📂", key: mek.key } });
     
@@ -262,16 +299,16 @@ async function sendChunkSelection(hansaka, from, session, mek) {
 async function downloadAndSendAnime(hansaka, from, episode, client, mek) {
     await hansaka.sendMessage(from, { react: { text: "🚀", key: mek.key } });
     
-    let progMsg = await hansaka.sendMessage(from, { text: "> [ ක්‍රියාවලිය ආරම්භ විය ] - ගොනුව නිස්සාරණය කරමින් පවතී... ⚙️" });
+    let progMsg = await hansaka.sendMessage(from, { text: "✦ ━━━━━━━━━━━━ ✦\n⚙️ ගොනුව නිස්සාරණය කරමින් පවතී...\n✦ ━━━━━━━━━━━━ ✦" });
     const eKey = progMsg.key;
     
     const delay = ms => new Promise(res => setTimeout(res, ms));
 
     await delay(1500);
-    await hansaka.sendMessage(from, { text: "> [ ගොනුව තහවුරු කෙරිණි ] - මූලික සේවාදායකයෙන් ලබාගනිමින් පවතී... 📡", edit: eKey });
+    await hansaka.sendMessage(from, { text: "✦ ━━━━━━━━━━━━ ✦\n📡 මූලික සේවාදායකයෙන් ලබාගනිමින් පවතී...\n✦ ━━━━━━━━━━━━ ✦", edit: eKey });
     
     await delay(1500);
-    await hansaka.sendMessage(from, { text: `> [ දත්ත හුවමාරුව ] - සේවාදායකය වෙත බාගත කිරීම ආරම්භ විය... ⏳`, edit: eKey });
+    await hansaka.sendMessage(from, { text: "✦ ━━━━━━━━━━━━ ✦\n⏳ සේවාදායකය වෙත බාගත කිරීම ආරම්භ විය...\n✦ ━━━━━━━━━━━━ ✦", edit: eKey });
 
     let cleanName = episode.name.replace(/\.[^/.]+$/, "");
     let newFileName = `${cleanName} - By OLYA${episode.ext}`;
@@ -299,7 +336,16 @@ async function downloadAndSendAnime(hansaka, from, episode, client, mek) {
                     if (pct > 5 && pct < 95) {
                         let filled = Math.floor(pct / 10);
                         let barStr = `[${'█'.repeat(filled)}${'░'.repeat(10 - filled)}]`;
-                        let txt = `> [ ජාල ගමනාගමන තත්ත්වය (Traffic Status) ]\n> 📥 *දත්ත බාගත වෙමින් පවතී...*\n> ${barStr} ${pct}%\n> ⚡ දත්ත හුවමාරු වේගය: ${speedStr}`;
+                        let txt = `✦ ━━━━━━━━━━━━━━━ ✦
+     *📥 Traffic Status*
+✦ ━━━━━━━━━━━━━━━ ✦
+
+දත්ත බාගත වෙමින් පවතී...
+${barStr} ${pct}%
+
+⚡ දත්ත හුවමාරු වේගය: ${speedStr}
+
+> 🧚‍♀️ 𝒫𝑜𝓌𝑒𝓇𝑒𝒹 𝐵𝓎 𝒪𝐿𝒴𝒜 𝒮𝑒𝓇𝓋𝑒𝓇`;
                         await hansaka.sendMessage(from, { text: txt, edit: eKey }).catch(()=>{});
                     }
                 }
@@ -307,9 +353,9 @@ async function downloadAndSendAnime(hansaka, from, episode, client, mek) {
         });
 
         fs.writeFileSync(tempFilePath, buffer);
-        await hansaka.sendMessage(from, { text: "> [ බාගත කිරීම සම්පූර්ණයි ] - ගොනුව සුරක්ෂිතව සූදානම් කර ඇත. ✅", edit: eKey });
+        await hansaka.sendMessage(from, { text: "✦ ━━━━━━━━━━━━ ✦\n✅ ගොනුව සුරක්ෂිතව සූදානම් කර ඇත.\n✦ ━━━━━━━━━━━━ ✦", edit: eKey });
         await delay(1500);
-        await hansaka.sendMessage(from, { text: "> [ අවසන් පියවර ] - ඔබගේ උපාංගය වෙත ගොනුව උඩුගත (Upload) කරමින් පවතී... 📶", edit: eKey });
+        await hansaka.sendMessage(from, { text: "✦ ━━━━━━━━━━━━ ✦\n📶 ඔබගේ උපාංගය වෙත ගොනුව උඩුගත (Upload) කරමින් පවතී...\n✦ ━━━━━━━━━━━━ ✦", edit: eKey });
 
         const FINAL_CAPTION = `✧ ━━ 𝓞𝓛𝓨𝓐 𝓐𝓝𝓘𝓜𝓔 𝓓𝓞𝓦𝓝𝓛𝓞𝓐𝓓𝓔𝓡 ━━ ✧
    [ 𝗔𝗱𝘃𝗮𝗻𝗰𝗲𝗱 𝗔𝗜 𝗥𝗲𝘁𝗿𝗶𝗲𝘃𝗮𝗹 𝗦𝘆𝘀𝘁𝗲𝗺 ]
@@ -372,7 +418,8 @@ async function downloadAndSendAnime(hansaka, from, episode, client, mek) {
     } catch(err) {
         console.error("Download Error:", err);
         if (client) await client.disconnect();
-        hansaka.sendMessage(from, { text: "> ⚠️ [ බාගත කිරීමේ දෝෂයකි ]\n> ක්‍රියාවලිය අතරමැද ඇනහිටුණි. පද්ධතියට සම්බන්ධ වීමේ දෝෂයක් විය හැක.", edit: eKey });
+        let errTxt = `✦ ━━━━━━━━━━━━━ ✦\n⚠️ *බාගත කිරීමේ දෝෂයකි*\n✦ ━━━━━━━━━━━━━ ✦\n\nක්‍රියාවලිය අතරමැද ඇනහිටුණි. පද්ධතියට සම්බන්ධ වීමේ දෝෂයක් විය හැක.`;
+        hansaka.sendMessage(from, { text: errTxt, edit: eKey });
     }
 }
 
