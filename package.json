@@ -9,7 +9,7 @@
     "restart": "pm2 restart Olya-Assistant"
   },
   "dependencies": {
-    "@consumet/extensions": "^1.8.8",
+    "@consumet/extensions": "latest",
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@google/generative-ai": "^0.24.1",
     "@whiskeysockets/baileys": "^6.7.16",
