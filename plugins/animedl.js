@@ -6,6 +6,7 @@ const ffmpeg = require('fluent-ffmpeg');
 const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 const config = require('../config');
+const { JSDOM } = require('jsdom');
 const cheerio = require('cheerio');
 
 // =============================================
@@ -15,166 +16,309 @@ const FOOTER_TEXT = "𝓐𝓼𝓼𝓲𝓼𝓽𝓪𝓷𝓽 𝓞𝓵𝔂𝓪 💞�
 const formatMsg = (title, body) =>
     `✦ ━━━━━━━━━━━━━━━ ✦\n${title}\n\n${body}\n✦ ━━━━━━━━━━━━━━━ ✦\n\n> ${FOOTER_TEXT}`;
 
+// Message Delete Helper
 const deleteMsg = async (hansaka, from, key) => {
     try { if (key) await hansaka.sendMessage(from, { delete: key }); } catch (e) {}
 };
 
-// =============================================
-// TELEGRAM SCRAPER LOGIC (Fallback)
-// =============================================
-const searchTelegram = async (query) => {
-    try {
-        const url = `https://t.me/s/animehub6`; // ඔයාගේ චැනල් එක
-        const { data } = await axios.get(url);
-        const $ = cheerio.load(data);
-        let results = [];
-
-        $('.tgme_widget_message_wrap').each((i, el) => {
-            const text = $(el).find('.tgme_widget_message_text').text();
-            const link = $(el).find('.tgme_widget_message_date').attr('href');
-            if (text && text.toLowerCase().includes(query.toLowerCase())) {
-                results.push({
-                    id: link, 
-                    title: text.split('\n')[0].trim(),
-                    isTelegram: true
-                });
-            }
-        });
-        return results.reverse().slice(0, 5);
-    } catch (e) { return []; }
+// Safe String Converter
+const safeStr = (val) => {
+    if (val === null || val === undefined) return "N/A";
+    if (typeof val === 'object') return val.english || val.romaji || val.userPreferred || JSON.stringify(val);
+    return String(val);
 };
 
 // =============================================
-// VIDEO PROCESSING (m3u8 to mp4)
+// CLOUDFLARE BYPASS & PROXY HELPERS
 // =============================================
-const convertToMP4 = (url, outputPath) => {
-    return new Promise((resolve, reject) => {
-        ffmpeg(url)
-            .outputOptions(['-c copy', '-bsf:a aac_adtstoasc'])
-            .output(outputPath)
-            .on('end', () => resolve(outputPath))
-            .on('error', (err) => reject(err))
-            .run();
+const getRandomUserAgent = () => {
+    const agents = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/119.0',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/119.0'
+    ];
+    return agents[Math.floor(Math.random() * agents.length)];
+};
+
+const createAxiosInstance = (url) => {
+    return axios.create({
+        timeout: 30000,
+        headers: {
+            'User-Agent': getRandomUserAgent(),
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Cache-Control': 'max-age=0'
+        }
     });
 };
 
+const bypassCloudflare = async (url) => {
+    const strategies = [
+        async () => {
+            const instance = createAxiosInstance(url);
+            const response = await instance.get(url);
+            return response.data;
+        },
+        async () => {
+            const proxyUrl = `https://cors.isomorphic-git.org/${url}`;
+            const response = await axios.get(proxyUrl, {
+                headers: {
+                    'User-Agent': getRandomUserAgent(),
+                    'Referer': new URL(url).origin
+                }
+            });
+            return response.data;
+        },
+        async () => {
+            const textiseUrl = `https://r.jina.ai/http://${url.replace(/^https?:\/\//, '')}`;
+            const response = await axios.get(textiseUrl);
+            return response.data;
+        }
+    ];
+
+    for (const strategy of strategies) {
+        try {
+            return await strategy();
+        } catch (error) {
+            continue;
+        }
+    }
+    throw new Error('All bypass strategies failed');
+};
+
 // =============================================
-// API FETCHERS (Cloudflare Bypass Included)
+// ENHANCED API FETCHERS WITH CLOUDFLARE BYPASS
 // =============================================
 async function searchAnimeList(query) {
     try {
-        const res = await axios.get(`https://api.anispace.workers.dev/search/${encodeURIComponent(query)}`, { timeout: 10000 });
-        return res.data.results || [];
-    } catch (e) {
-        return await searchTelegram(query); // API වැඩ නැත්නම් Telegram බලනවා
+        const url = `https://api.anispace.workers.dev/search/${encodeURIComponent(query)}`;
+        const res = await axios.get(url, { timeout: 15000 });
+        return res.data.results || res.data || [];
+    } catch (error) {
+        try {
+            const searchUrl = `https://aniwatch.to/search?keyword=${encodeURIComponent(query)}`;
+            const html = await bypassCloudflare(searchUrl);
+            const $ = cheerio.load(html);
+            const results = [];
+            $('.film-list .film-item').each((i, elem) => {
+                if (i >= 5) return false;
+                const $elem = $(elem);
+                results.push({
+                    id: $elem.find('a').attr('href')?.replace('/anime/', '') || '',
+                    title: $elem.find('.film-name').text().trim(),
+                    image: $elem.find('img').attr('data-src') || $elem.find('img').attr('src'),
+                    episodes: $elem.find('.film-episodes').text().trim() || 'N/A'
+                });
+            });
+            return results;
+        } catch (fallbackError) {
+            return [];
+        }
     }
 }
 
 async function getEpisodes(animeId) {
     try {
-        const res = await axios.get(`https://api.anispace.workers.dev/anime/${animeId}`);
+        const url = `https://api.anispace.workers.dev/anime/${animeId}`;
+        const res = await axios.get(url, { timeout: 15000 });
         return res.data;
-    } catch (e) { return null; }
+    } catch (error) {
+        try {
+            const animeUrl = `https://aniwatch.to/anime/${animeId}`;
+            const html = await bypassCloudflare(animeUrl);
+            const $ = cheerio.load(html);
+            const episodes = [];
+            $('.episodes-list .episode-item').each((i, elem) => {
+                const $elem = $(elem);
+                episodes.push({
+                    id: $elem.find('a').attr('href')?.replace('/watch/', '') || '',
+                    number: parseInt($elem.find('.episode-number').text()) || i + 1,
+                    title: $elem.find('.episode-title').text().trim() || `Episode ${i + 1}`
+                });
+            });
+            return {
+                title: $('.anime-detail .title').text().trim(),
+                image: $('.anime-detail .anime-poster img').attr('src'),
+                totalEpisodes: episodes.length,
+                episodes: episodes
+            };
+        } catch (fallbackError) {
+            return { error: true };
+        }
+    }
+}
+
+function extractStreamUrl(encryptedData) {
+    try {
+        const regex = /(https?:\/\/[^\s"'<>]+\.(m3u8|mp4)[^\s"'<>]*)/g;
+        const matches = encryptedData.match(regex);
+        return matches ? matches[0] : null;
+    } catch (e) {
+        return null;
+    }
 }
 
 async function getStreamLink(episodeId) {
     try {
-        const res = await axios.get(`https://api.anispace.workers.dev/episode/${episodeId}`);
+        const url = `https://api.anispace.workers.dev/episode/${episodeId}`;
+        const res = await axios.get(url, { timeout: 15000 });
         return res.data.sources || res.data;
-    } catch (e) { return null; }
+    } catch (error) {
+        try {
+            const episodeUrl = `https://aniwatch.to/watch/${episodeId}`;
+            const html = await bypassCloudflare(episodeUrl);
+            const $ = cheerio.load(html);
+            const scripts = $('script').map((i, elem) => $(elem).html()).get();
+            const encryptedData = scripts.find(script => script.includes('data-source') || script.includes('streamUrl'));
+            
+            if (encryptedData) {
+                const streamUrl = extractStreamUrl(encryptedData);
+                if (streamUrl) return [{ quality: 'Auto', url: streamUrl }];
+            }
+            return [];
+        } catch (fallbackError) {
+            return [];
+        }
+    }
 }
 
 // =============================================
-// COMMANDS
+// VIDEO DOWNLOAD HELPER (FFMPEG)
+// =============================================
+const downloadStream = (url, outputPath) => {
+    return new Promise((resolve, reject) => {
+        ffmpeg(url)
+            .outputOptions('-c copy') // Fast stream copy
+            .save(outputPath)
+            .on('end', () => resolve(outputPath))
+            .on('error', (err) => {
+                console.error('FFmpeg Error:', err);
+                reject(err);
+            });
+    });
+};
+
+// =============================================
+// BOT COMMANDS
 // =============================================
 
 // 1. Search Anime
 cmd({
     pattern: "anime",
+    alias: ["searchanime"],
+    desc: "Search for an anime",
     category: "anime",
-    desc: "Search anime from API or Telegram.",
-    use: ".anime Naruto",
-    filename: __filename
-},
-async (hansaka, mek, m, { from, q, reply }) => {
+    react: "🎬"
+}, async (hansaka, dest, m, { q, reply }) => {
+    if (!q) return reply(formatMsg("Missing Input", "Please provide an anime name!\nExample: .anime Naruto"));
     try {
-        if (!q) return reply("❗ කරුණාකර නමක් දෙන්න.");
-        let status = await reply("🔍 සොයමින් පවතී...");
-        
+        let loadingMsg = await hansaka.sendMessage(dest, { text: "Searching for details... 🕵️‍♂️" }, { quoted: m });
         const results = await searchAnimeList(q);
-        await deleteMsg(hansaka, from, status.key);
-
-        if (!results || results.length === 0) return reply("🚫 ප්‍රතිඵල හමු නොවීය.");
-
-        let msg = `🎬 *Anime Search Results*\n\n`;
-        results.forEach((res, i) => {
-            if (res.isTelegram) {
-                msg += `*${i + 1}.* ${res.title}\n🔗 [Telegram Link](${res.id})\n\n`;
-            } else {
-                msg += `*${i + 1}.* ${res.title}\n🆔 ID: \`${res.id}\`\n\n`;
-            }
+        if (!results || results.length === 0) {
+            await deleteMsg(hansaka, dest, loadingMsg.key);
+            return reply(formatMsg("Not Found", "No results found for your query."));
+        }
+        let listText = "Here are the top results:\n\n";
+        results.forEach((anime, index) => {
+            listText += `*${index + 1}. ${safeStr(anime.title)}*\n`;
+            listText += `📺 Episodes: ${anime.episodes}\n`;
+            listText += `🔗 ID: ${anime.id}\n\n`;
         });
-        
-        msg += `> එපිසෝඩ් ගැනීමට \`.anisero [ID]\` ලබා දෙන්න.`;
-        reply(formatMsg("✨ Results", msg));
-    } catch (e) { reply("🔴 දෝෂයක් සිදු විය."); }
+        listText += "Use *.episodes <ID>* to get the episode list.";
+        await deleteMsg(hansaka, dest, loadingMsg.key);
+        await hansaka.sendMessage(dest, { image: { url: results[0].image }, caption: formatMsg("Anime Search Results", listText) }, { quoted: m });
+    } catch (e) {
+        reply(formatMsg("Error", "An error occurred while fetching Anime data."));
+    }
 });
 
 // 2. Get Episodes
 cmd({
-    pattern: "anisero",
+    pattern: "episodes",
+    alias: ["animelist"],
+    desc: "Get episodes of an anime",
     category: "anime",
-    desc: "Get episodes list.",
-    filename: __filename
-},
-async (hansaka, mek, m, { from, q, reply }) => {
+    react: "📑"
+}, async (hansaka, dest, m, { q, reply }) => {
+    if (!q) return reply(formatMsg("Missing Input", "Please provide an Anime ID!\nExample: .episodes naruto-shippuden-502"));
     try {
-        if (!q) return reply("❗ ID එකක් දෙන්න.");
+        let loadingMsg = await hansaka.sendMessage(dest, { text: "Fetching episodes... ⏳" }, { quoted: m });
         const data = await getEpisodes(q);
-        if (!data) return reply("🔴 දත්ත සොයාගත නොහැකි විය.");
-
-        let msg = `🎬 *${data.title}*\n\n`;
-        data.episodes.slice(0, 15).forEach(ep => {
-            msg += `🔹 Ep ${ep.number}: \`.anidl ${ep.id}|720p|${ep.number}\` \n`;
-        });
-        reply(formatMsg("📺 Episode List", msg));
-    } catch (e) { reply("🔴 දෝෂයක් විය."); }
-});
-
-// 3. Download & Send
-cmd({
-    pattern: "anidl",
-    category: "anime",
-    desc: "Download and send anime.",
-    filename: __filename
-},
-async (hansaka, mek, m, { from, q, reply }) => {
-    try {
-        const [epId, qual, num] = q.split('|');
-        if (!epId) return reply("❗ වැරදි විධානයක්.");
-
-        let status = await reply("🔄 Episode " + num + " සකස් කරමින්... ⏳");
-        const sources = await getStreamLink(epId);
-        const stream = (Array.isArray(sources) ? sources[0]?.url : sources);
-
-        if (!stream) return reply("🔴 ලින්ක් එක සොයාගත නොහැකි විය.");
-
-        const filePath = path.join(__dirname, `../data/anime_${Date.now()}.mp4`);
-        if (!fs.existsSync(path.join(__dirname, '../data'))) fs.mkdirSync(path.join(__dirname, '../data'));
-
-        await convertToMP4(stream, filePath);
-        await deleteMsg(hansaka, from, status.key);
-
-        await hansaka.sendMessage(from, { 
-            document: fs.readFileSync(filePath), 
-            mimetype: 'video/mp4', 
-            fileName: `Anime_Ep_${num}.mp4`, 
-            caption: formatMsg("✅ සාර්ථකයි", `Episode: ${num}\nQuality: ${qual}`)
-        }, { quoted: mek });
-
-        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-    } catch (e) { 
-        console.log(e);
-        reply("🔴 වීඩියෝව එවීමේදී දෝෂයක් විය."); 
+        if (data.error || !data.episodes || data.episodes.length === 0) {
+            await deleteMsg(hansaka, dest, loadingMsg.key);
+            return reply(formatMsg("Error", "Could not fetch episodes for this ID."));
+        }
+        let epText = `*Title:* ${safeStr(data.title)}\n*Total Episodes:* ${data.totalEpisodes}\n\n`;
+        const limit = Math.min(data.episodes.length, 20);
+        for (let i = 0; i < limit; i++) {
+            let ep = data.episodes[i];
+            epText += `*Ep ${ep.number}:* ${safeStr(ep.title)}\nID: ${ep.id}\n\n`;
+        }
+        if (data.episodes.length > 20) epText += `_...and ${data.episodes.length - 20} more episodes._\n\n`;
+        epText += "Use *.watch <Episode_ID>* to get the video.";
+        await deleteMsg(hansaka, dest, loadingMsg.key);
+        await hansaka.sendMessage(dest, { image: { url: data.image }, caption: formatMsg("Episode List", epText) }, { quoted: m });
+    } catch (e) {
+        reply(formatMsg("Error", "An error occurred while fetching episodes."));
     }
 });
+
+// 3. Watch / Download Episode
+cmd({
+    pattern: "watch",
+    alias: ["stream", "downloadanime"],
+    desc: "Download and send the episode video directly",
+    category: "anime",
+    react: "🎥"
+}, async (hansaka, dest, m, { q, reply }) => {
+    if (!q) return reply(formatMsg("Missing Input", "Please provide an Episode ID!\nExample: .watch naruto-episode-1"));
+    let loadingMsg, tempFilePath;
+    try {
+        loadingMsg = await hansaka.sendMessage(dest, { text: "Extracting stream links... 🔐" }, { quoted: m });
+        const sources = await getStreamLink(q);
+        if (!sources || sources.length === 0) {
+            await deleteMsg(hansaka, dest, loadingMsg.key);
+            return reply(formatMsg("Error", "Could not extract streaming links for this episode."));
+        }
+
+        const streamUrl = sources[0].url;
+        const quality = sources[0].quality || 'Auto';
+        
+        // Temp file path in the root/temp directory
+        const tempDir = path.join(__dirname, '../temp');
+        if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir);
+        tempFilePath = path.join(tempDir, `anime_${Date.now()}.mp4`);
+
+        await hansaka.sendMessage(dest, { text: `Downloading video (${quality})... Please wait, this might take a minute! ⏳` }, { edit: loadingMsg.key });
+
+        await downloadStream(streamUrl, tempFilePath);
+        await hansaka.sendMessage(dest, { text: "Uploading to WhatsApp... 🚀" }, { edit: loadingMsg.key });
+
+        await hansaka.sendMessage(dest, { 
+            document: fs.readFileSync(tempFilePath), 
+            mimetype: 'video/mp4',
+            fileName: `${q} [${quality}].mp4`,
+            caption: formatMsg("Download Complete", `Here is your episode! 🍿\nQuality: ${quality}`) 
+        }, { quoted: m });
+
+        if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+        await deleteMsg(hansaka, dest, loadingMsg.key);
+
+    } catch (e) {
+        console.error(e);
+        if (tempFilePath && fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+        if (loadingMsg) await deleteMsg(hansaka, dest, loadingMsg.key);
+        reply(formatMsg("Error", "An error occurred while downloading the video. The file might be too large or the stream is broken."));
+    }
+});
+
+module.exports = { searchAnimeList, getEpisodes, getStreamLink };
