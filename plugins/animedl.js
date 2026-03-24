@@ -76,7 +76,7 @@ cmd({
 
         const messages = await client.getMessages(TARGET_CHANNEL, {
             search: q,
-            limit: 40
+            limit: 1500
         });
 
         if (messages.length === 0) {
@@ -205,7 +205,7 @@ cmd({
                     }
                 }
                 
-                let textToSpeak = `Hello. I am Olya Assistant by Hansaka Fernando. Data Retrieval initiated. ${syn}`;
+                let textToSpeak = `Hello. I am Olya Assistant by Hansaka Fernando. Data Retrieval initiated. ${selectedName}. ${syn}`;
                 let audioUrl = googleTTS.getAudioUrl(textToSpeak, { lang: 'en', slow: false });
                 
                 let tDir = path.join(__dirname, '../temp');
@@ -214,11 +214,18 @@ cmd({
                 let tOut = path.join(tDir, `tout_${Date.now()}.mp3`);
                 
                 let audData = await axios.get(audioUrl, { responseType: 'arraybuffer', timeout: 8000 });
-                fs.writeFileSync(tIn, audData.data);
+                let rawBuffer = Buffer.from(audData.data, 'binary');
+                fs.writeFileSync(tIn, rawBuffer);
                 
-                let cmdStr = `ffmpeg -y -i "${tIn}" -f lavfi -i "sine=f=120" -filter_complex "[0:a]tremolo=f=10:d=0.5,flanger=delay=5:depth=2[v];[1:a]volume=0.03[bg];[v][bg]amix=inputs=2:duration=first" "${tOut}"`;
+                // Simpler robotic effect to ensure ffmpeg compatibility
+                let cmdStr = `ffmpeg -y -i "${tIn}" -filter_complex "tremolo=f=8:d=0.8,flanger=delay=5:depth=2" "${tOut}"`;
                 
-                await new Promise((res) => exec(cmdStr, res));
+                await new Promise((resolve) => {
+                    exec(cmdStr, (err, stdout, stderr) => {
+                        if (err) console.error("[AnimeDL] FFmpeg error:", err.message);
+                        resolve();
+                    });
+                });
                 
                 if (fs.existsSync(tOut)) {
                     await hansaka.sendMessage(from, { audio: fs.readFileSync(tOut), mimetype: 'audio/mp4', ptt: true }, { quoted: mek });
@@ -333,7 +340,8 @@ async function downloadAndSendAnime(hansaka, from, episode, client, mek) {
     let lastProgTime = Date.now();
     let lastDownloaded = 0;
     try {
-        const buffer = await client.downloadMedia(episode.msgObj, {
+        await client.downloadMedia(episode.msgObj, {
+            outputFile: tempFilePath,
             progressCallback: async (downloaded, total) => {
                 let now = Date.now();
                 if (now - lastProgTime > 2500) {
@@ -365,7 +373,6 @@ ${barStr} ${pct}%
             }
         });
 
-        fs.writeFileSync(tempFilePath, buffer);
         await hansaka.sendMessage(from, { text: "✦ ━━━━━━━━━━━━ ✦\n✅ ගොනුව සුරක්ෂිතව සූදානම් කර ඇත.\n✦ ━━━━━━━━━━━━ ✦", edit: eKey });
         await delay(1500);
         await hansaka.sendMessage(from, { text: "✦ ━━━━━━━━━━━━ ✦\n📶 ඔබගේ උපාංගය වෙත ගොනුව උඩුගත (Upload) කරමින් පවතී...\n✦ ━━━━━━━━━━━━ ✦", edit: eKey });
@@ -405,7 +412,7 @@ ${barStr} ${pct}%
         } catch(et){}
 
         let sendObj = {
-            document: fs.readFileSync(tempFilePath),
+            document: { url: tempFilePath },
             mimetype: episode.ext.includes('mkv') ? 'video/x-matroska' : 'video/mp4',
             fileName: newFileName,
             caption: FINAL_CAPTION
