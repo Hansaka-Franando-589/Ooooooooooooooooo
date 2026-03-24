@@ -157,10 +157,13 @@ cmd({
 });
 
 // =============================================
-// ON BODY SUB-HANDLER FOR ANIMEDL SESSION
+// SUB-HANDLER FOR ANIMEDL SESSION (NATIVE)
 // =============================================
 cmd({
-    on: "body",
+    filter: (text, ex) => {
+        let from = ex && ex.message && ex.message.key ? ex.message.key.remoteJid : null;
+        return from ? !!userAnimeSessions[from] : false;
+    },
     dontAddCommandList: true,
     filename: __filename
 }, async (hansaka, mek, m, { from, body, reply }) => {
