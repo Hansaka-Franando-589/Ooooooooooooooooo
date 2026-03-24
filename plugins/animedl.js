@@ -412,7 +412,7 @@ ${barStr} ${pct}%
         } catch(et){}
 
         let sendObj = {
-            document: { url: tempFilePath },
+            document: { stream: fs.createReadStream(tempFilePath) },
             mimetype: episode.ext.includes('mkv') ? 'video/x-matroska' : 'video/mp4',
             fileName: newFileName,
             caption: FINAL_CAPTION
