@@ -147,6 +147,7 @@ cmd({
         
         listText += `\n> 🧚‍♀️ 𝒫𝑜𝓌𝑒𝓇𝑒𝒹 𝐵𝓎 𝒪𝐿𝒴𝒜 𝒮𝑒𝓇𝓋𝑒𝓇`;
         await hansaka.sendMessage(from, { text: listText, edit: loadingMsg.key });
+        userAnimeSessions[from].loadingKey = null;
         
     } catch(e) {
         console.error("Anime Search Error:", e);
