@@ -29,6 +29,7 @@
     "gifted-btns": "^1.0.2",
     "google-tts-api": "^2.0.2",
     "html-pdf-node": "latest",
+    "jsdom": "^29.0.1",
     "megajs": "^1.1.0",
     "node-fetch": "^2.6.1",
     "node-id3": "^0.2.9",
