@@ -319,65 +319,13 @@ async function sendChunkSelection(hansaka, from, session, mek) {
 async function downloadAndSendAnime(hansaka, from, episode, client, mek) {
     await hansaka.sendMessage(from, { react: { text: "🚀", key: mek.key } });
     
-    let progMsg = await hansaka.sendMessage(from, { text: "✦ ━━━━━━━━━━━━ ✦\n⚙️ ගොනුව නිස්සාරණය කරමින් පවතී...\n✦ ━━━━━━━━━━━━ ✦" });
+    let progMsg = await hansaka.sendMessage(from, { text: "✦ ━━━━━━━━━━━━━━ ✦\n📶 *Direct Streaming Initiated...*\n✦ ━━━━━━━━━━━━━━ ✦\n\nඕල්යා පද්ධතිය විසින් Telegram සේවාදායකයේ සිට WhatsApp වෙතට කෙලින්ම ගොනුව (Zero-Delay Pipe) යොමු කිරීම ආරම්භ කර ඇත...\n\n> 🧚‍♀️ 𝒫𝑜𝓌𝑒𝓇𝑒𝒹 𝐵𝓎 𝒪𝐿𝒴𝒜 𝒮𝑒𝓇𝓋𝑒𝓇" });
     const eKey = progMsg.key;
     
-    const delay = ms => new Promise(res => setTimeout(res, ms));
-
-    await delay(1500);
-    await hansaka.sendMessage(from, { text: "✦ ━━━━━━━━━━━━ ✦\n📡 මූලික සේවාදායකයෙන් ලබාගනිමින් පවතී...\n✦ ━━━━━━━━━━━━ ✦", edit: eKey });
-    
-    await delay(1500);
-    await hansaka.sendMessage(from, { text: "✦ ━━━━━━━━━━━━ ✦\n⏳ සේවාදායකය වෙත බාගත කිරීම ආරම්භ විය...\n✦ ━━━━━━━━━━━━ ✦", edit: eKey });
-
     let cleanName = episode.name.replace(/\.[^/.]+$/, "");
     let newFileName = `${cleanName} - By OLYA${episode.ext}`;
     
-    const tempDir = path.join(__dirname, '../temp');
-    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir);
-    const tempFilePath = path.join(tempDir, newFileName);
-
-    let lastProgTime = Date.now();
-    let lastDownloaded = 0;
-    try {
-        await client.downloadMedia(episode.msgObj, {
-            outputFile: tempFilePath,
-            progressCallback: async (downloaded, total) => {
-                let now = Date.now();
-                if (now - lastProgTime > 2500) {
-                    let dlDiff = downloaded - lastDownloaded;
-                    let timeDiffSec = (now - lastProgTime) / 1000;
-                    let speedBytes = dlDiff / timeDiffSec;
-                    let speedStr = formatSize(speedBytes) + '/s';
-                    
-                    lastProgTime = now;
-                    lastDownloaded = downloaded;
-                    
-                    let pct = Math.floor((downloaded / total) * 100);
-                    if (pct > 5 && pct < 95) {
-                        let filled = Math.floor(pct / 10);
-                        let barStr = `[${'█'.repeat(filled)}${'░'.repeat(10 - filled)}]`;
-                        let txt = `✦ ━━━━━━━━━━━━━━━ ✦
-     *📥 Traffic Status*
-✦ ━━━━━━━━━━━━━━━ ✦
-
-දත්ත බාගත වෙමින් පවතී...
-${barStr} ${pct}%
-
-⚡ දත්ත හුවමාරු වේගය: ${speedStr}
-
-> 🧚‍♀️ 𝒫𝑜𝓌𝑒𝓇𝑒𝒹 𝐵𝓎 𝒪𝐿𝒴𝒜 𝒮𝑒𝓇𝓋𝑒𝓇`;
-                        await hansaka.sendMessage(from, { text: txt, edit: eKey }).catch(()=>{});
-                    }
-                }
-            }
-        });
-
-        await hansaka.sendMessage(from, { text: "✦ ━━━━━━━━━━━━ ✦\n✅ ගොනුව සුරක්ෂිතව සූදානම් කර ඇත.\n✦ ━━━━━━━━━━━━ ✦", edit: eKey });
-        await delay(1500);
-        await hansaka.sendMessage(from, { text: "✦ ━━━━━━━━━━━━ ✦\n📶 ඔබගේ උපාංගය වෙත ගොනුව උඩුගත (Upload) කරමින් පවතී...\n✦ ━━━━━━━━━━━━ ✦", edit: eKey });
-
-        const FINAL_CAPTION = `✧ ━━ 𝓞𝓛𝓨𝓐 𝓐𝓝𝓘𝓜𝓔 𝓓𝓞𝓦𝓝𝓛𝓞𝓐𝓓𝓔𝓡 ━━ ✧
+    const FINAL_CAPTION = `✧ ━━ 𝓞𝓛𝓨𝓐 𝓐𝓝𝓘𝓜𝓔 𝓓𝓞𝓦𝓝𝓛𝓞𝓐𝓓𝓔𝓡 ━━ ✧
    [ 𝗔𝗱𝘃𝗮𝗻𝗰𝗲𝗱 𝗔𝗜 𝗥𝗲𝘁𝗿𝗶𝗲𝘃𝗮𝗹 𝗦𝘆𝘀𝘁𝗲𝗺 ]
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -404,42 +352,90 @@ ${barStr} ${pct}%
   📡 𝒫𝑜𝓌𝑒𝓇𝑒𝒹 𝐵𝓎 𝒪𝐿𝒴𝒜 𝒮𝑒𝓇𝓋𝑒𝓇 𝒮𝓎𝓈𝓉𝑒𝓂
   👨‍💻 𝒢𝑒𝓃𝑒𝓇𝒶𝓉𝑒𝒹 𝐵𝓎 𝐻𝒶𝓃𝓈𝒶𝓀𝒶 𝒫. 𝐹𝑒𝓇𝓃𝒶𝓃𝒹𝑜`;
 
-        let thumbData = null;
-        try {
-            if (config.ANIME_IMG && fs.existsSync(config.ANIME_IMG)) {
-                thumbData = fs.readFileSync(config.ANIME_IMG);
-            }
-        } catch(et){}
-
-        let sendObj = {
-            document: { stream: fs.createReadStream(tempFilePath) },
-            mimetype: episode.ext.includes('mkv') ? 'video/x-matroska' : 'video/mp4',
-            fileName: newFileName,
-            caption: FINAL_CAPTION
-        };
-
-        if(thumbData) {
-            sendObj.contextInfo = {
-                externalAdReply: {
-                    title: cleanName,
-                    body: "Powered by OLYA Server System",
-                    mediaType: 1,
-                    thumbnail: thumbData
-                }
-            };
+    let thumbData = null;
+    try {
+        if (config.ANIME_IMG && require('fs').existsSync(config.ANIME_IMG)) {
+            thumbData = require('fs').readFileSync(config.ANIME_IMG);
         }
+    } catch(et){}
 
-        await hansaka.sendMessage(from, sendObj, { quoted: mek });
-        fs.unlinkSync(tempFilePath);
-        await client.disconnect();
+    const { PassThrough } = require('stream');
+    const directPipe = new PassThrough();
+
+    let sendObj = {
+        document: { stream: directPipe },
+        mimetype: episode.ext.includes('mkv') ? 'video/x-matroska' : 'video/mp4',
+        fileName: newFileName,
+        caption: FINAL_CAPTION
+    };
+
+    if(thumbData) {
+        sendObj.contextInfo = {
+            externalAdReply: {
+                title: cleanName,
+                body: "Powered by OLYA Server System",
+                mediaType: 1,
+                thumbnail: thumbData
+            }
+        };
+    }
+
+    try {
+        // Start concurrent processing: Upload stream initiates reading, while Client downloads to stream.
+        let uploadPromise = hansaka.sendMessage(from, sendObj, { quoted: mek });
         
+        let lastProgTime = Date.now();
+        let lastDownloaded = 0;
+
+        let downloadPromise = client.downloadMedia(episode.msgObj, {
+            outputFile: directPipe,
+            progressCallback: async (downloaded, total) => {
+                let now = Date.now();
+                if (now - lastProgTime > 4000) { 
+                    let dlDiff = downloaded - lastDownloaded;
+                    let timeDiffSec = (now - lastProgTime) / 1000;
+                    let speedBytes = dlDiff / timeDiffSec;
+                    let speedStr = formatSize(speedBytes) + '/s';
+                    
+                    lastProgTime = now;
+                    lastDownloaded = downloaded;
+                    
+                    let pct = Math.floor((downloaded / total) * 100);
+                    if (pct > 5 && pct < 98) {
+                        let filled = Math.floor(pct / 10);
+                        let barStr = `[${'█'.repeat(filled)}${'░'.repeat(10 - filled)}]`;
+                        let txt = `✦ ━━━━━━━━━━━━━━━ ✦
+     *📥 Direct Traffic Status*
+✦ ━━━━━━━━━━━━━━━ ✦
+
+නලයක් හරහා සජීවීව දත්ත සම්ප්‍රේෂණය වෙමින් පවතී (Live Streaming Pipeline)...
+${barStr} ${pct}%
+
+⚡ දත්ත හුවමාරු වේගය: ${speedStr}
+
+> 🧚‍♀️ 𝒫𝑜𝓌𝑒𝓇𝑒𝒹 𝐵𝓎 𝒪𝐿𝒴𝒜 𝒮𝑒𝓇𝓋𝑒𝓇`;
+                        await hansaka.sendMessage(from, { text: txt, edit: eKey }).catch(()=>{});
+                    }
+                }
+            }
+        });
+
+        // Wait for Telegram to completely feed the stream
+        await downloadPromise;
+        directPipe.end(); // Seal the pipe so WhatsApp knows it is done receiving bytes
+
+        // Wait for WhatsApp chunker to confirm success
+        await uploadPromise;
+
+        await client.disconnect();
         try { await hansaka.sendMessage(from, { delete: eKey }); } catch(err){}
 
     } catch(err) {
-        console.error("Download Error:", err);
+        console.error("Direct Core Stream Error:", err);
+        directPipe.destroy(err);
         if (client) await client.disconnect();
-        let errTxt = `✦ ━━━━━━━━━━━━━ ✦\n⚠️ *බාගත කිරීමේ දෝෂයකි*\n✦ ━━━━━━━━━━━━━ ✦\n\nක්‍රියාවලිය අතරමැද ඇනහිටුණි. පද්ධතියට සම්බන්ධ වීමේ දෝෂයක් විය හැක.`;
-        hansaka.sendMessage(from, { text: errTxt, edit: eKey });
+        let errTxt = `✦ ━━━━━━━━━━━━━ ✦\n⚠️ *සේවාදායකයේ දෝෂයකි*\n✦ ━━━━━━━━━━━━━ ✦\n\nSystem Core එකෙන් Streaming ක්‍රියාවලිය අතරමග නවතා දැමීය. (Pipe Error) පසුව උත්සාහ කරන්න.`;
+        hansaka.sendMessage(from, { text: errTxt, edit: eKey }).catch(()=>{});
     }
 }
 
