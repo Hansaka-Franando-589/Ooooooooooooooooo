@@ -208,7 +208,7 @@ const downloadStream = (url, outputPath) => {
 };
 
 // =============================================
-// BOT COMMANDS (FINAL JID FIX)
+// BOT COMMANDS (FINAL QUOTED QUIRK FIX)
 // =============================================
 
 // 1. Search Anime
@@ -218,13 +218,14 @@ cmd({
     desc: "Search for an anime",
     category: "anime",
     react: "🎬"
-}, async (hansaka, mek, m, { q, reply }) => {
+}, async (hansaka, mek, m, { from, q, reply }) => {
     if (!q) return reply(formatMsg("Missing Input", "Please provide an anime name!\nExample: .anime Naruto"));
     try {
-        // නිවැරදිව Chat ID එක ලබා ගැනීම
-        const jid = m.chat || mek.key.remoteJid;
+        // JID Fallback for extra safety
+        const jid = from || m?.chat || mek?.chat || mek?.sender;
         
-        let loadingMsg = await hansaka.sendMessage(jid, { text: "Searching for details... 🕵️‍♂️" }, { quoted: mek });
+        // Removed { quoted: mek } which was causing the Baileys crash
+        let loadingMsg = await hansaka.sendMessage(jid, { text: "Searching for details... 🕵️‍♂️" });
         
         const results = await searchAnimeList(q);
         if (!results || results.length === 0) {
@@ -241,7 +242,8 @@ cmd({
         listText += "Use *.episodes <ID>* to get the episode list.";
         
         await deleteMsg(hansaka, jid, loadingMsg.key);
-        await hansaka.sendMessage(jid, { image: { url: results[0].image }, caption: formatMsg("Anime Search Results", listText) }, { quoted: mek });
+        // Removed quoted from here too
+        await hansaka.sendMessage(jid, { image: { url: results[0].image }, caption: formatMsg("Anime Search Results", listText) });
         
     } catch (e) {
         console.error("Anime Command Error:", e);
@@ -256,11 +258,11 @@ cmd({
     desc: "Get episodes of an anime",
     category: "anime",
     react: "📑"
-}, async (hansaka, mek, m, { q, reply }) => {
+}, async (hansaka, mek, m, { from, q, reply }) => {
     if (!q) return reply(formatMsg("Missing Input", "Please provide an Anime ID!\nExample: .episodes naruto-shippuden-502"));
     try {
-        const jid = m.chat || mek.key.remoteJid;
-        let loadingMsg = await hansaka.sendMessage(jid, { text: "Fetching episodes... ⏳" }, { quoted: mek });
+        const jid = from || m?.chat || mek?.chat || mek?.sender;
+        let loadingMsg = await hansaka.sendMessage(jid, { text: "Fetching episodes... ⏳" });
         
         const data = await getEpisodes(q);
         if (data.error || !data.episodes || data.episodes.length === 0) {
@@ -279,7 +281,7 @@ cmd({
         epText += "Use *.watch <Episode_ID>* to get the video.";
         
         await deleteMsg(hansaka, jid, loadingMsg.key);
-        await hansaka.sendMessage(jid, { image: { url: data.image }, caption: formatMsg("Episode List", epText) }, { quoted: mek });
+        await hansaka.sendMessage(jid, { image: { url: data.image }, caption: formatMsg("Episode List", epText) });
         
     } catch (e) {
         console.error("Episodes Command Error:", e);
@@ -294,12 +296,12 @@ cmd({
     desc: "Download and send the episode video directly",
     category: "anime",
     react: "🎥"
-}, async (hansaka, mek, m, { q, reply }) => {
+}, async (hansaka, mek, m, { from, q, reply }) => {
     if (!q) return reply(formatMsg("Missing Input", "Please provide an Episode ID!\nExample: .watch naruto-episode-1"));
     let loadingMsg, tempFilePath;
     try {
-        const jid = m.chat || mek.key.remoteJid;
-        loadingMsg = await hansaka.sendMessage(jid, { text: "Extracting stream links... 🔐" }, { quoted: mek });
+        const jid = from || m?.chat || mek?.chat || mek?.sender;
+        loadingMsg = await hansaka.sendMessage(jid, { text: "Extracting stream links... 🔐" });
         
         const sources = await getStreamLink(q);
         if (!sources || sources.length === 0) {
@@ -314,24 +316,24 @@ cmd({
         if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir);
         tempFilePath = path.join(tempDir, `anime_${Date.now()}.mp4`);
 
-        await hansaka.sendMessage(jid, { text: `Downloading video (${quality})... Please wait, this might take a minute! ⏳` }, { edit: loadingMsg.key });
+        await hansaka.sendMessage(jid, { text: `Downloading video (${quality})... Please wait, this might take a minute! ⏳`, edit: loadingMsg.key });
 
         await downloadStream(streamUrl, tempFilePath);
-        await hansaka.sendMessage(jid, { text: "Uploading to WhatsApp... 🚀" }, { edit: loadingMsg.key });
+        await hansaka.sendMessage(jid, { text: "Uploading to WhatsApp... 🚀", edit: loadingMsg.key });
 
         await hansaka.sendMessage(jid, { 
             document: fs.readFileSync(tempFilePath), 
             mimetype: 'video/mp4',
             fileName: `${q} [${quality}].mp4`,
             caption: formatMsg("Download Complete", `Here is your episode! 🍿\nQuality: ${quality}`) 
-        }, { quoted: mek });
+        });
 
         if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
         await deleteMsg(hansaka, jid, loadingMsg.key);
 
     } catch (e) {
         console.error("Watch Command Error:", e);
-        const jid = m.chat || mek.key.remoteJid;
+        const jid = from || m?.chat || mek?.chat || mek?.sender;
         if (tempFilePath && fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
         if (loadingMsg) await deleteMsg(hansaka, jid, loadingMsg.key);
         reply(formatMsg("Error", "An error occurred while downloading the video. The file might be too large or the stream is broken."));
