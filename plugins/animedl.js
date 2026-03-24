@@ -8,12 +8,20 @@ ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 const config = require('../config');
 const { sendInteractiveMessage } = require('gifted-btns');
 
-// 🔥 අපේම Native Engine එක (අලුත්ම වර්ෂන් එකට ගැළපෙන පරිදි සකසා ඇත)
+// 🔥 අපේම Native Engine එක (අලුත් සහ පරණ වර්ෂන් දෙකටම ගැළපෙන පරිදි 100% ක් ආරක්ෂිතව)
 const consumet = require('@consumet/extensions');
-
-// වර්ෂන් එක මොකක් වුණත් Crash නොවී වැඩ කිරීමට:
-const GogoanimeClass = consumet.PROVIDERS ? consumet.PROVIDERS.ANIME.Gogoanime : consumet.ANIME.Gogoanime;
-const gogoanime = new GogoanimeClass();
+let gogoanime;
+try {
+    if (consumet.ANIME && typeof consumet.ANIME.Gogoanime === 'function') {
+        gogoanime = new consumet.ANIME.Gogoanime();
+    } else if (consumet.PROVIDERS && consumet.PROVIDERS.ANIME && typeof consumet.PROVIDERS.ANIME.Gogoanime === 'function') {
+        gogoanime = new consumet.PROVIDERS.ANIME.Gogoanime();
+    } else {
+        console.log("⚠️ Gogoanime Module එක නිවැරදිව Load වුණේ නැත.");
+    }
+} catch (error) {
+    console.log("🔴 Gogoanime Initialization Error:", error.message);
+}
 
 // =============================================
 // GLOBAL DESIGNS & FOOTERS
@@ -54,6 +62,8 @@ async function searchAnimeList(query) {
 // 2. Info & Episodes (Native Local Engine)
 async function getAnimeInfoNative(animeTitle) {
     try {
+        if (!gogoanime) throw new Error("Gogoanime Engine is down.");
+        
         // Gogoanime සර්ච් එකට ගැලපෙන්න නමේ තියෙන විශේෂ අකුරු අයින් කිරීම
         const cleanTitle = animeTitle.replace(/[^a-zA-Z0-9 ]/g, " ").trim();
         const searchRes = await gogoanime.search(cleanTitle);
@@ -72,6 +82,7 @@ async function getAnimeInfoNative(animeTitle) {
 // 3. Episodes by ID (Native)
 async function getEpisodesById(gogoId) {
     try {
+        if (!gogoanime) throw new Error("Gogoanime Engine is down.");
         const info = await gogoanime.fetchAnimeInfo(gogoId);
         return info || { error: true };
     } catch (e) {
@@ -82,6 +93,7 @@ async function getEpisodesById(gogoId) {
 // 4. Stream Links (Native)
 async function getStreamLink(episodeId) {
     try {
+        if (!gogoanime) throw new Error("Gogoanime Engine is down.");
         const res = await gogoanime.fetchEpisodeSources(episodeId);
         return res.sources || [];
     } catch (e) {
