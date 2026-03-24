@@ -208,7 +208,7 @@ const downloadStream = (url, outputPath) => {
 };
 
 // =============================================
-// BOT COMMANDS
+// BOT COMMANDS (FIXED PARAMETERS)
 // =============================================
 
 // 1. Search Anime
@@ -218,15 +218,17 @@ cmd({
     desc: "Search for an anime",
     category: "anime",
     react: "🎬"
-}, async (hansaka, dest, m, { q, reply }) => {
+}, async (hansaka, mek, m, { from, q, reply }) => {
     if (!q) return reply(formatMsg("Missing Input", "Please provide an anime name!\nExample: .anime Naruto"));
     try {
-        let loadingMsg = await hansaka.sendMessage(dest, { text: "Searching for details... 🕵️‍♂️" }, { quoted: m });
+        let loadingMsg = await hansaka.sendMessage(from, { text: "Searching for details... 🕵️‍♂️" }, { quoted: mek });
+        
         const results = await searchAnimeList(q);
         if (!results || results.length === 0) {
-            await deleteMsg(hansaka, dest, loadingMsg.key);
+            await deleteMsg(hansaka, from, loadingMsg.key);
             return reply(formatMsg("Not Found", "No results found for your query."));
         }
+        
         let listText = "Here are the top results:\n\n";
         results.forEach((anime, index) => {
             listText += `*${index + 1}. ${safeStr(anime.title)}*\n`;
@@ -234,9 +236,11 @@ cmd({
             listText += `🔗 ID: ${anime.id}\n\n`;
         });
         listText += "Use *.episodes <ID>* to get the episode list.";
-        await deleteMsg(hansaka, dest, loadingMsg.key);
-        await hansaka.sendMessage(dest, { image: { url: results[0].image }, caption: formatMsg("Anime Search Results", listText) }, { quoted: m });
-    }  catch (e) {
+        
+        await deleteMsg(hansaka, from, loadingMsg.key);
+        await hansaka.sendMessage(from, { image: { url: results[0].image }, caption: formatMsg("Anime Search Results", listText) }, { quoted: mek });
+        
+    } catch (e) {
         console.error("Anime Command Error:", e);
         reply(formatMsg("System Error", `හරියටම ආපු Error එක:\n*${e.message}*`));
     }
@@ -249,26 +253,32 @@ cmd({
     desc: "Get episodes of an anime",
     category: "anime",
     react: "📑"
-}, async (hansaka, dest, m, { q, reply }) => {
+}, async (hansaka, mek, m, { from, q, reply }) => {
     if (!q) return reply(formatMsg("Missing Input", "Please provide an Anime ID!\nExample: .episodes naruto-shippuden-502"));
     try {
-        let loadingMsg = await hansaka.sendMessage(dest, { text: "Fetching episodes... ⏳" }, { quoted: m });
+        let loadingMsg = await hansaka.sendMessage(from, { text: "Fetching episodes... ⏳" }, { quoted: mek });
+        
         const data = await getEpisodes(q);
         if (data.error || !data.episodes || data.episodes.length === 0) {
-            await deleteMsg(hansaka, dest, loadingMsg.key);
+            await deleteMsg(hansaka, from, loadingMsg.key);
             return reply(formatMsg("Error", "Could not fetch episodes for this ID."));
         }
+        
         let epText = `*Title:* ${safeStr(data.title)}\n*Total Episodes:* ${data.totalEpisodes}\n\n`;
         const limit = Math.min(data.episodes.length, 20);
         for (let i = 0; i < limit; i++) {
             let ep = data.episodes[i];
             epText += `*Ep ${ep.number}:* ${safeStr(ep.title)}\nID: ${ep.id}\n\n`;
         }
+        
         if (data.episodes.length > 20) epText += `_...and ${data.episodes.length - 20} more episodes._\n\n`;
         epText += "Use *.watch <Episode_ID>* to get the video.";
-        await deleteMsg(hansaka, dest, loadingMsg.key);
-        await hansaka.sendMessage(dest, { image: { url: data.image }, caption: formatMsg("Episode List", epText) }, { quoted: m });
+        
+        await deleteMsg(hansaka, from, loadingMsg.key);
+        await hansaka.sendMessage(from, { image: { url: data.image }, caption: formatMsg("Episode List", epText) }, { quoted: mek });
+        
     } catch (e) {
+        console.error("Episodes Command Error:", e);
         reply(formatMsg("Error", "An error occurred while fetching episodes."));
     }
 });
@@ -280,44 +290,44 @@ cmd({
     desc: "Download and send the episode video directly",
     category: "anime",
     react: "🎥"
-}, async (hansaka, dest, m, { q, reply }) => {
+}, async (hansaka, mek, m, { from, q, reply }) => {
     if (!q) return reply(formatMsg("Missing Input", "Please provide an Episode ID!\nExample: .watch naruto-episode-1"));
     let loadingMsg, tempFilePath;
     try {
-        loadingMsg = await hansaka.sendMessage(dest, { text: "Extracting stream links... 🔐" }, { quoted: m });
+        loadingMsg = await hansaka.sendMessage(from, { text: "Extracting stream links... 🔐" }, { quoted: mek });
+        
         const sources = await getStreamLink(q);
         if (!sources || sources.length === 0) {
-            await deleteMsg(hansaka, dest, loadingMsg.key);
+            await deleteMsg(hansaka, from, loadingMsg.key);
             return reply(formatMsg("Error", "Could not extract streaming links for this episode."));
         }
 
         const streamUrl = sources[0].url;
         const quality = sources[0].quality || 'Auto';
         
-        // Temp file path in the root/temp directory
         const tempDir = path.join(__dirname, '../temp');
         if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir);
         tempFilePath = path.join(tempDir, `anime_${Date.now()}.mp4`);
 
-        await hansaka.sendMessage(dest, { text: `Downloading video (${quality})... Please wait, this might take a minute! ⏳` }, { edit: loadingMsg.key });
+        await hansaka.sendMessage(from, { text: `Downloading video (${quality})... Please wait, this might take a minute! ⏳` }, { edit: loadingMsg.key });
 
         await downloadStream(streamUrl, tempFilePath);
-        await hansaka.sendMessage(dest, { text: "Uploading to WhatsApp... 🚀" }, { edit: loadingMsg.key });
+        await hansaka.sendMessage(from, { text: "Uploading to WhatsApp... 🚀" }, { edit: loadingMsg.key });
 
-        await hansaka.sendMessage(dest, { 
+        await hansaka.sendMessage(from, { 
             document: fs.readFileSync(tempFilePath), 
             mimetype: 'video/mp4',
             fileName: `${q} [${quality}].mp4`,
             caption: formatMsg("Download Complete", `Here is your episode! 🍿\nQuality: ${quality}`) 
-        }, { quoted: m });
+        }, { quoted: mek });
 
         if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-        await deleteMsg(hansaka, dest, loadingMsg.key);
+        await deleteMsg(hansaka, from, loadingMsg.key);
 
     } catch (e) {
-        console.error(e);
+        console.error("Watch Command Error:", e);
         if (tempFilePath && fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-        if (loadingMsg) await deleteMsg(hansaka, dest, loadingMsg.key);
+        if (loadingMsg) await deleteMsg(hansaka, from, loadingMsg.key);
         reply(formatMsg("Error", "An error occurred while downloading the video. The file might be too large or the stream is broken."));
     }
 });
