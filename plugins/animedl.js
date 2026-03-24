@@ -236,7 +236,7 @@ cmd({
         listText += "Use *.episodes <ID>* to get the episode list.";
         await deleteMsg(hansaka, dest, loadingMsg.key);
         await hansaka.sendMessage(dest, { image: { url: results[0].image }, caption: formatMsg("Anime Search Results", listText) }, { quoted: m });
-    } } catch (e) {
+    }  catch (e) {
         console.error("Anime Command Error:", e);
         reply(formatMsg("System Error", `හරියටම ආපු Error එක:\n*${e.message}*`));
     }
