@@ -8,9 +8,12 @@ ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 const config = require('../config');
 const { sendInteractiveMessage } = require('gifted-btns');
 
-// 🔥 අපේම Native Engine එක (No Blocks, No 451 Errors)
-const { ANIME } = require('@consumet/extensions');
-const gogoanime = new ANIME.Gogoanime();
+// 🔥 අපේම Native Engine එක (අලුත්ම වර්ෂන් එකට ගැළපෙන පරිදි සකසා ඇත)
+const consumet = require('@consumet/extensions');
+
+// වර්ෂන් එක මොකක් වුණත් Crash නොවී වැඩ කිරීමට:
+const GogoanimeClass = consumet.PROVIDERS ? consumet.PROVIDERS.ANIME.Gogoanime : consumet.ANIME.Gogoanime;
+const gogoanime = new GogoanimeClass();
 
 // =============================================
 // GLOBAL DESIGNS & FOOTERS
