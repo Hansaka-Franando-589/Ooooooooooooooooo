@@ -1,587 +1,446 @@
-const {
-  default: makeWASocket,
-  useMultiFileAuthState,
-  DisconnectReason,
-  jidNormalizedUser,
-  getContentType,
-  fetchLatestBaileysVersion,
-  Browsers
-} = require('@whiskeysockets/baileys');
-
+const { cmd } = require('../command');
+const { TelegramClient, Api } = require("telegram");
+const { StringSession } = require("telegram/sessions");
 const fs = require('fs');
-const P = require('pino');
-const express = require('express');
-const axios = require('axios');
 const path = require('path');
-const qrcode = require('qrcode-terminal');
+const https = require('https');
 
-const originalLog = console.log;
-console.log = function(...args) {
-    if (typeof args[0] === 'string' && !args[0].includes('𝓐𝓼𝓼𝓲𝓼𝓽𝓪𝓷𝓽 𝓞𝓵𝔂𝓪')) {
-        args[0] = `💙 𝓐𝓼𝓼𝓲𝓼𝓽𝓪𝓷𝓽 𝓞𝓵𝔂𝓪 💞🐝 | ` + args[0];
-    }
-    originalLog.apply(console, args);
+// =============================================
+// TELEGRAM API CONFIGURATION
+// =============================================
+const apiId = 36884998;
+const apiHash = "c49aa7cecc8079e252f4c49379790700";
+const sessionString = "1BQANOTEuMTA4LjU2LjEzMwG7oq1HrH2MdLQ5wZTQljax6swwg7BnveLkiznbkkHyS5TXAOaoi0U5qlUGCVRuSUuTnSIINgSLHCkL4NKEZC1bzb9B7QksWgwXYgl836NfYRsyGCVNhrmx5Zd3/jZZE/Q17NxyIAKwvVfTVoGh0jseQNCTLyhQ/3aRj+RgF/Ogjq/anUpelwJNDP2bIq7yF9GzruEqpA1UnUTAMbIsQFe7GvR9ZhXXfecMSwiW2qjNoJ0CKb10QO4fYqlm3fzvPp5AlrDfSVlQG2MPRpKRoy8rdGGfQ9pUMr8yQ3eGTiepQP3g6+T7pPnLfUpEQOl4bo1ZBFbeIhta0FnY7NyTcV/PsQ==";
+const stringSession = new StringSession(sessionString);
+const TARGET_CHANNEL = "@animehub6";
+
+// =============================================
+// GLOBAL DESIGNS
+// =============================================
+const FOOTER_TEXT = "𝓐𝓼𝓼𝓲𝓼𝓽𝓪𝓷𝓽 𝓞𝓵𝔂𝓪 💞🐝";
+const formatMsg = (title, body) =>
+    `✦ ━━━━━━━━━━━━━━━ ✦\n${title}\n\n${body}\n✦ ━━━━━━━━━━━━━━━ ✦\n\n> ${FOOTER_TEXT}`;
+
+const deleteMsg = async (hansaka, jid, key) => {
+    try { if (key) await hansaka.sendMessage(jid, { delete: key }); } catch (e) { }
 };
 
-const config = require('./config');
-const { sms, downloadMediaMessage } = require('./lib/msg');
-const {
-  getBuffer, getGroupAdmins, getRandom, h2k, isUrl, Json, runtime, sleep, fetchJson
-} = require('./lib/functions');
-const { File } = require('megajs');
-const { commands, replyHandlers } = require('./command');
+// =============================================
+// ANIME STATE STORE (per user)
+// =============================================
+const animeState = {};
+const PAGE_SIZE = 15;
 
-const app = express();
-const port = process.env.PORT || 8000;
-
-const prefix = '.';
-const ownerNumber = [config.OWNER_NUMBER];
-const credsPath = path.join(__dirname, '/auth_info_baileys/creds.json');
-
-const globalMsgCache = {};
-const spamCheck = {};
-
-async function ensureSessionFile() {
-  if (!fs.existsSync(credsPath)) {
-    console.log("🔄 No local session found.");
-    if (config.SESSION_ID) {
-      fs.mkdirSync(path.join(__dirname, '/auth_info_baileys/'), { recursive: true });
-      
-      const sessdata = config.SESSION_ID;
-      
-      // If it looks like a MEGA link
-      if (sessdata.includes('mega.nz')) {
-         console.log("🔄 Attempting to download session from MEGA...");
-         try {
-           const filer = File.fromURL(sessdata);
-           filer.download((err, data) => {
-             if (err) throw err;
-             fs.writeFileSync(credsPath, data);
-             console.log("✅ Session downloaded from MEGA. Starting bot...");
-             setTimeout(() => connectToWA(), 2000);
-           });
-           return;
-         } catch (e) {
-           console.error("❌ MEGA Session failed.");
-         }
-      } 
-      
-      // Otherwise, assume it is a Base64 string
-      try {
-        console.log("🔄 Attempting to decode Base64 Session ID...");
-        const decodedCreds = Buffer.from(sessdata, 'base64').toString('utf-8');
-        // Simple check if it's valid JSON
-        JSON.parse(decodedCreds); 
-        fs.writeFileSync(credsPath, decodedCreds);
-        console.log("✅ Session decoded and saved. Starting bot...");
-        setTimeout(() => connectToWA(), 2000);
-      } catch (e) {
-        console.log("❌ config.SESSION_ID is not a valid Base64 or MEGA ID. Starting fresh...");
-        setTimeout(() => connectToWA(), 1000);
-      }
-    } else {
-      console.log("🔄 No SESSION_ID found. Starting process to generate Pairing Code...");
-      setTimeout(() => connectToWA(), 1000);
+// =============================================
+// FILE NAME HELPERS
+// =============================================
+function getRawFileName(msg) {
+    if (msg.document && msg.document.attributes) {
+        const attr = msg.document.attributes.find(a => a.className === "DocumentAttributeFilename");
+        if (attr && attr.fileName) return attr.fileName;
     }
-  } else {
-    console.log("✅ Local session found. Starting bot...");
-    setTimeout(() => connectToWA(), 1000);
-  }
+    // Do NOT fall back to msg.message - it can contain copyright content
+    return `Anime_File_${msg.id}`;
 }
 
-async function connectToWA() {
-  console.log("Connecting Olya Assistant 🧬...");
-  const { state, saveCreds } = await useMultiFileAuthState(path.join(__dirname, '/auth_info_baileys/'));
-  const { version } = await fetchLatestBaileysVersion();
+// Sanitize name for WhatsApp display - removes channel tags, @ mentions etc.
+function cleanDisplayName(rawName) {
+    let name = rawName
+        .replace(/@[\w._-]+/g, '')          // remove @channel mentions
+        .replace(/\[[^\]]{0,30}\]/g, '')     // remove [tags]
+        .replace(/\([^)]{0,30}p\)/g, '')     // remove (720p) (1080p) etc
+        .replace(/\s{2,}/g, ' ')             // collapse spaces
+        .trim();
 
-  const hansaka = makeWASocket({
-    logger: P({ level: 'silent' }),
-    printQRInTerminal: false,
-    browser: Browsers.macOS("Firefox"),
-    auth: state,
-    version,
-    syncFullHistory: true,
-    markOnlineOnConnect: true,
-    generateHighQualityLinkPreview: true,
-  });
+    // Remove leading/trailing dots, dashes, underscores
+    name = name.replace(/^[._\-\s]+|[._\-\s]+$/g, '').trim();
 
-  // Pairing Code Logic
-  if (!hansaka.authState.creds.registered) {
-    const phoneNumber = config.BOT_NUMBER.replace(/[^0-9]/g, ''); 
-    
-    // ⏱️ Delay එක තත්පර 6ක් දක්වා වැඩි කර ඇත
-    setTimeout(async () => {
-      try {
-        let code = await hansaka.requestPairingCode(phoneNumber);
-        code = code?.match(/.{1,4}/g)?.join("-") || code;
-        console.log(`\n=========================================\n`);
-        console.log(`🔑 ඔබේ පේයාරිං කේතය (PAIRING CODE): \x1b[32m${code}\x1b[0m`);
-        console.log(`ඔබගේ WhatsApp හි 'Linked Devices' වෙත ගොස් 'Link with Phone Number' හරහා ඉහත කේතය ලබා දෙන්න.`);
-        console.log(`\n=========================================\n`);
-      } catch (err) {
-        console.log("❌ Pairing Code එක ලබා ගැනීමේදී දෝෂයක් ඇතිවිය: ", err);
-      }
-    }, 6000); 
-  }
-
-  hansaka.ev.on('connection.update', async (update) => {
-    const { connection, lastDisconnect } = update;
-    if (connection === 'close') {
-      if (lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut) {
-        connectToWA();
-      }
-    } else if (connection === 'open') {
-      console.log('✅ Olya Assistant connected to WhatsApp');
-      await hansaka.sendPresenceUpdate('available'); 
-
-      try {
-        fs.readdirSync("./plugins/").forEach((plugin) => {
-          if (path.extname(plugin).toLowerCase() === ".js") {
-            require(`./plugins/${plugin}`);
-          }
-        });
-        console.log('✅ Plugins loaded successfully');
-      } catch (err) {
-        console.error('❌ Failed to load plugins:', err);
-      }
-
-      const up = `Olya Assistant connected ✅\n\nPREFIX: ${prefix}`;
-      try {
-        await hansaka.sendMessage(ownerNumber[0] + "@s.whatsapp.net", { text: up });
-      } catch (err) {
-        console.error('❌ Failed to send startup message:', err);
-      }
-    }
-  });
-
-  hansaka.ev.on('creds.update', saveCreds);
-
-  hansaka.ev.on('messages.upsert', async ({ messages }) => {
-    for (const msg of messages) {
-      if (msg.messageStubType === 68) {
-        await hansaka.sendMessageAck(msg.key);
-      }
+    // If empty after cleaning, use truncated original
+    if (!name) {
+        name = rawName.replace(/@[\w._-]+/g, '').trim().substring(0, 50);
     }
 
-    const mek = messages[0];
-    if (!mek || !mek.message) return;
+    // Limit length
+    if (name.length > 60) name = name.substring(0, 57) + '...';
 
-    const isRevoke = mek.message?.protocolMessage?.type === 0 || mek.message?.protocolMessage?.type === 'REVOKE';
-    if (isRevoke) {
-        const deletedKey = mek.message.protocolMessage.key.id;
-        const ogMek = globalMsgCache[deletedKey];
-        if (ogMek && !mek.key.fromMe) {
-            const senderId = ogMek.key.participant || ogMek.key.remoteJid;
-            const targetJid = mek.key.remoteJid;
-            const pmType = getContentType(ogMek.message);
-            const ogBody = pmType === 'conversation' ? ogMek.message.conversation : ogMek.message[pmType]?.text || ogMek.message[pmType]?.caption || '';
-            
-            try {
-                const { GoogleGenerativeAI } = require("@google/generative-ai");
-                const genAI = new GoogleGenerativeAI(config.GEMINI_API_KEYS[Math.floor(Math.random() * config.GEMINI_API_KEYS.length)]);
-                const geminiModel = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-                
-                let promptMsg = `A user just deleted a message on WhatsApp. Act as Olya, the highly advanced AI assistant to Hansaka. Speak strictly in natural Sinhala script. Address the person politely. Say something like: 'You just deleted a message, but as an advanced AI, I saved it. Here is what you deleted:'. Keep it very short, polite, and human-like. Do not mention Rashmi or special titles unless instructed.`;
-                const res = await geminiModel.generateContent(promptMsg);
-                let aiWarning = res.response.text().trim() + "\n\n> 𝓐𝓼𝓼𝓲𝓼𝓽𝓪𝓷𝓽 𝓞𝓵𝔂𝓪 💞🐝";
-                if (ogBody && !pmType.includes('image') && !pmType.includes('video') && !pmType.includes('audio') && !pmType.includes('document')) {
-                    aiWarning += `\n\n💬 *Deleted Message:* "${ogBody}"`;
-                }
-                
-                const { downloadMediaMessage } = require('@whiskeysockets/baileys');
-                if (pmType.includes('image') || pmType.includes('video') || pmType.includes('audio') || pmType.includes('document') || pmType.includes('sticker')) {
-                    const buffer = await downloadMediaMessage(ogMek, 'buffer', {}, { logger: console });
-                    let mediaObj = {};
-                    if (pmType.includes('image')) mediaObj = { image: buffer, caption: aiWarning + (ogBody ? `\n\nCaption: ${ogBody}` : '') };
-                    else if (pmType.includes('video')) mediaObj = { video: buffer, caption: aiWarning + (ogBody ? `\n\nCaption: ${ogBody}` : '') };
-                    else if (pmType.includes('audio')) mediaObj = { audio: buffer, mimetype: 'audio/mp4', ptt: ogMek.message[pmType].ptt };
-                    else mediaObj = { document: buffer, caption: aiWarning + (ogBody ? `\n\nCaption: ${ogBody}` : ''), mimetype: ogMek.message[pmType]?.mimetype || 'application/pdf' };
-                    
-                    if (pmType.includes('audio') || pmType.includes('sticker')) {
-                        await hansaka.sendMessage(targetJid, { text: aiWarning });
-                        await hansaka.sendMessage(targetJid, mediaObj);
-                    } else {
-                        await hansaka.sendMessage(targetJid, mediaObj);
-                    }
-                } else {
-                    await hansaka.sendMessage(targetJid, { text: aiWarning });
-                }
-            } catch (err) {
-                console.log("Anti-Delete error:", err);
-            }
-        }
-    }
+    return name || rawName.substring(0, 50);
+}
 
-    if (mek.key.fromMe) return; 
+// =============================================
+// SMART LOCAL GROUPING (no AI needed)
+// Groups episodes into ranges, keeps others separately
+// =============================================
+function smartGroup(messages, fileNames) {
+    // Episode detection patterns
+    const epPattern = /(?:ep(?:isode)?s?|e)[.\s_-]?(\d+)(?!\d)|[.\s_-](\d{2,4})[.\s_-]/i;
 
-    // Send read receipt (Blue Ticks)
-    await hansaka.readMessages([mek.key]);
+    const episodic = [];
+    const nonEpisodic = [];
 
-    const from = mek.key.remoteJid;
-    let type = getContentType(mek.message);
-
-    // Auto View Status and React with Skull
-    if (from === 'status@broadcast') {
-        try {
-            // Usually we react indicating we viewed it fast
-            await hansaka.sendMessage(from, { react: { text: "💀", key: mek.key } });
-        } catch (err) {
-            console.error("Auto status react error:", err);
-        }
-        return;
-    }
-
-    if (type === 'ephemeralMessage') {
-        mek.message = mek.message.ephemeralMessage.message;
-        type = getContentType(mek.message);
-    } else if (type === 'viewOnceMessage') {
-        mek.message = mek.message.viewOnceMessage.message;
-        type = getContentType(mek.message);
-    } else if (type === 'viewOnceMessageV2') {
-        mek.message = mek.message.viewOnceMessageV2.message;
-        type = getContentType(mek.message);
-    } else if (type === 'viewOnceMessageV2Extension') {
-        mek.message = mek.message.viewOnceMessageV2Extension.message;
-        type = getContentType(mek.message);
-    } else if (type === 'documentWithCaptionMessage') {
-        mek.message = mek.message.documentWithCaptionMessage.message;
-        type = getContentType(mek.message);
-    }
-    
-    const isViewOnce = type === 'viewOnceMessage' || type === 'viewOnceMessageV2' || type === 'viewOnceMessageV2Extension';
-    if (isViewOnce && !mek.key.fromMe) {
-        try {
-            const { downloadMediaMessage } = require('@whiskeysockets/baileys');
-            const buffer = await downloadMediaMessage(mek, 'buffer', {}, { logger: console });
-            
-            const { getTemplate } = require('./data/messages');
-            const aiCapt = getTemplate('view_once_intercept');
-            
-            const voType = Object.keys(mek.message[type]?.message || mek.message[type] || {})[0] || 'imageMessage';
-            const isVideo = voType === 'videoMessage';
-            
-            await hansaka.sendMessage(from, { [isVideo ? 'video' : 'image']: buffer, caption: aiCapt }, { quoted: mek });
-        } catch (err) {
-            console.log("Viewonce error:", err);
-            const { getTemplate } = require('./data/messages');
-            await hansaka.sendMessage(from, { text: getTemplate('view_once_intercept') }, { quoted: mek });
-        }
-    }
-
-    if (from === 'status@broadcast') {
-        const statusKey = {
-            remoteJid: from,
-            id: mek.key.id,
-            participant: mek.key.participant || mek.participant
-        };
-        await hansaka.readMessages([statusKey]);
-        if (Math.random() < 0.3) {
-            const emojis = ['❤️', '🔥', '😎', '💯'];
-            const randomEmoji = emojis[Math.floor(Math.random() * emojis.length)];
-            await hansaka.sendMessage(from, { react: { text: randomEmoji, key: mek.key } });
-        }
-        return;
-    }
-
-    const m = sms(hansaka, mek);
-    let body = type === 'conversation' ? mek.message.conversation : mek.message[type]?.text || mek.message[type]?.caption || '';
-    
-    // Auto-extract Button Payload IDs
-    if (type === 'interactiveResponseMessage') {
-        try {
-            const paramsJsonStr = mek.message.interactiveResponseMessage.nativeFlowResponseMessage?.paramsJson;
-            if (paramsJsonStr) {
-                const paramsJson = JSON.parse(paramsJsonStr);
-                if (paramsJson && paramsJson.id) body = paramsJson.id;
-            }
-        } catch (e) {}
-    } else if (type === 'templateButtonReplyMessage') {
-        body = mek.message.templateButtonReplyMessage.selectedId || mek.message.templateButtonReplyMessage.selectedDisplayText;
-    } else if (type === 'buttonsResponseMessage') {
-        body = mek.message.buttonsResponseMessage.selectedButtonId || mek.message.buttonsResponseMessage.selectedDisplayText;
-    } else if (type === 'listResponseMessage') {
-        body = mek.message.listResponseMessage.singleSelectReply.selectedRowId;
-    }
-    
-    globalMsgCache[mek.key.id] = mek;
-    
-    let possibleCmdStr = body.trim().split(/ +/)[0].toLowerCase();
-    let isCmd = body.startsWith(prefix);
-    let commandName = isCmd ? possibleCmdStr.slice(prefix.length) : possibleCmdStr;
-    
-    // Auto-detect prefixless commands (to bypass AI processing for known commands)
-    if (!isCmd && commandName.length > 0) {
-        const foundCmd = commands.find(c => c.pattern === commandName || (c.alias && c.alias.includes(commandName)));
-        if (foundCmd) {
-            isCmd = true;
-        } else if (body !== 'btn_action_menu') {
-            commandName = '';
-        }
-    }
-
-    let args = body.trim().split(/ +/).slice(1);
-    let q = args.join(' ');
-    
-    // Process Menu Action Button
-    if (body === 'btn_action_menu') {
-        isCmd = true;
-        commandName = 'menu';
-    }
-
-    const sender = mek.key.fromMe ? hansaka.user.id : (mek.key.participant || mek.key.remoteJid);
-    const senderNumber = sender.split('@')[0];
-    const isGroup = from.endsWith('@g.us');
-    const botNumber = hansaka.user.id.split(':')[0];
-    const pushname = mek.pushName || 'Sin Nombre';
-    const isMe = botNumber.includes(senderNumber);
-    const isOwner = ownerNumber.includes(senderNumber) || isMe;
-    const botNumber2 = await jidNormalizedUser(hansaka.user.id);
-
-    const isChuti = senderNumber === '94779680896'; // Rashmi
-
-    const isButton = type === 'interactiveResponseMessage' || type === 'templateButtonReplyMessage' || type === 'buttonsResponseMessage' || type === 'listResponseMessage';
-
-    if (!isGroup && !isOwner && !isChuti && !isButton) {
-        const now = Date.now();
-        if (!spamCheck[senderNumber]) spamCheck[senderNumber] = { count: 0, lastMsg: now, warned: false };
-        const userSpam = spamCheck[senderNumber];
-        
-        if (now - userSpam.lastMsg < 2500) { 
-            userSpam.count++;
-            userSpam.lastMsg = now;
-            if (userSpam.count >= 4) {
-                if (!userSpam.warned) {
-                    userSpam.warned = true;
-                    await hansaka.sendMessage(from, { text: `💙 𝓐𝓼𝓼𝓲𝓼𝓽𝓪𝓷𝓽 𝓞𝓵𝔂𝓪 💞🐝 |\n\n⚠️ *S P A M   W A R N I N G* ⚠️\n\nYou are sending messages too rapidly. As an advanced AI, I can process them, but it violates protocol. 🤖🚫\n\nI am ignoring you for the next 10 seconds. Calm down.` });
-                }
-                return; 
-            }
+    messages.forEach((msg, i) => {
+        const name = fileNames[i];
+        const match = name.match(epPattern);
+        if (match) {
+            const epNum = parseInt(match[1] || match[2]);
+            episodic.push({ msg, idx: i, epNum, name });
         } else {
-            userSpam.count = 1;
-            userSpam.lastMsg = now;
-            userSpam.warned = false;
+            nonEpisodic.push({ msg, idx: i, name });
         }
-    }
-
-    const groupMetadata = isGroup ? await hansaka.groupMetadata(from).catch(() => { }) : '';
-    const groupName = isGroup ? groupMetadata.subject : '';
-    const participants = isGroup ? groupMetadata.participants : '';
-    const groupAdmins = isGroup ? await getGroupAdmins(participants) : '';
-    const isBotAdmins = isGroup ? groupAdmins.includes(botNumber2) : false;
-    const isAdmins = isGroup ? groupAdmins.includes(sender) : false;
-
-    const reply = (text) => hansaka.sendMessage(from, { text }, { quoted: mek });
-
-    const { ytDownloaderState } = require('./lib/state');
-    let isSelection = false;
-    let selectedCmd = "";
-    let selectedQ = q;
-
-    if (!isCmd && /^[0-9]+$/.test(body.trim())) {
-        const selection = parseInt(body.trim());
-        
-        if (ytDownloaderState[senderNumber]) {
-            const state = ytDownloaderState[senderNumber];
-            selectedQ = state.url;
-            isSelection = true;
-            const isFb = state.isFb;
-            delete ytDownloaderState[senderNumber];
-
-            if (isFb) {
-                if (selection === 1) selectedCmd = "fbmp3_internal";
-                else if (selection === 2) selectedCmd = "fbmp3_doc_internal";
-                else if (selection === 3) selectedCmd = "fbptt_internal";
-                else if (selection === 4) selectedCmd = "fbmp4_internal";
-                else if (selection === 5) selectedCmd = "fbmp4_doc_internal";
-                else isSelection = false;
-            } else {
-                if (selection === 1) selectedCmd = "ytmp3_internal";
-                else if (selection === 2) selectedCmd = "ytmp3_doc_internal";
-                else if (selection === 3) selectedCmd = "ytptt_internal";
-                else isSelection = false;
-            }
-        } else {
-            // AI Chat එකට බාධා නොවීම සඳහා Global 1, 2 ඉවත් කරන ලදි.
-        }
-    } 
-
-    // =============================================
-    // REPLY HANDLERS - run FIRST before AI/cmd
-    // to intercept state-based flows (e.g. anime)
-    // =============================================
-    const replyText = body;
-    let handledByReplyHandler = false;
-    for (const handler of replyHandlers) {
-      try {
-        if (handler.filter(mek, { sender, message: mek })) {
-          await handler.function(hansaka, mek, m, {
-            from, quoted: mek, body: replyText, sender, senderNumber, reply,
-          });
-          handledByReplyHandler = true;
-          break;
-        }
-      } catch (e) {
-        console.log("Reply handler error:", e);
-      }
-    }
-    if (handledByReplyHandler) return;
-
-    let isAiTrigger = !isCmd && !isSelection && body.trim().length > 0;
-    
-    // --- AUTO LINK DOWNLOADER INTERCEPTOR ---
-    if (isAiTrigger) {
-        const linkMatch = body.match(/(https?:\/\/[^\s]+)/);
-        if (linkMatch) {
-            let url = linkMatch[1];
-            let isYt = url.includes('youtube.com') || url.includes('youtu.be');
-            let isFb = url.includes('facebook.com') || url.includes('fb.watch') || url.includes('fb.com');
-
-            if (isYt || isFb) {
-                ytDownloaderState[senderNumber] = { url: url, isFb: isFb };
-                
-                let menuMsg = `💙 𝓐𝓼𝓼𝓲𝓼𝓽𝓪𝓷𝓽 𝓞𝓵𝔂𝓪 💞🐝 |\n\n╭───────────────────✨\n│ 🚀 *A U T O  D O W N L O A D E R*\n╰───────────────────✨\n\nI have detected a *${isYt ? "YouTube" : "Facebook"}* Link! 🎬\nPlease select your desired format:`;
-                
-                let btns = [];
-                if (isYt) {
-                    btns = [
-                        { id: '1', text: '🎵 Audio(Nm)' },
-                        { id: '2', text: '📂 Audio(Doc)' },
-                        { id: '3', text: '🎤 Audio(VN)' }
-                    ];
-                } else {
-                    btns = [
-                        { id: '1', text: '🎵 Audio(Nm)' },
-                        { id: '2', text: '📂 Audio(Doc)' },
-                        { id: '3', text: '🎤 Audio(VN)' },
-                        { id: '4', text: '🎥 Video(Nm)' },
-                        { id: '5', text: '📁 Video(Doc)' }
-                    ];
-                }
-                
-                isAiTrigger = false;
-                const { sendButtons } = require('gifted-btns');
-                return await sendButtons(hansaka, from, {
-                    text: menuMsg,
-                    footer: "> 𝓐𝓼𝓼𝓲𝓼𝓽𝓪𝓷𝓽 𝓞𝓵𝔂𝓪 💞🐝",
-                    aimode: true,
-                    buttons: btns
-                });
-            }
-        }
-    }
-
-    let finalCommandName = isCmd ? commandName : (isSelection ? selectedCmd : "aichat");
-    let finalQ = isSelection ? selectedQ : q;
-
-    if (isGroup) return; 
-
-    // --- AUTO STICKER REPLY (before AI/registration) ---
-    if (!isCmd && !isSelection && body && body.trim().length > 0) {
-        try {
-            const { handleStickerReply } = require('./plugins/stickers');
-            const stickerSent = await handleStickerReply(hansaka, mek, from, body);
-            if (stickerSent) return; // Sticker sent — no further processing
-        } catch(e) {}
-    }
-
-
-    const { processMessage } = require('./plugins/profile');
-    
-    // We hand over message processing (Registration + Intent) to profile.js
-    let isHandled = await processMessage(hansaka, mek, m, {
-        from, senderNumber, body, type, pushname, isOwner, isMe, 
-        isCmd, isAiTrigger, isSelection, finalCommandName, finalQ, args, reply
     });
 
-    if (isHandled) return; // Process consumed by profile logic
+    // Sort episodes by number
+    episodic.sort((a, b) => a.epNum - b.epNum);
 
-    if (isCmd || isAiTrigger || isSelection) {
-      const cmd = commands.find((c) => c.pattern === finalCommandName || (c.alias && c.alias.includes(finalCommandName)));
-      
-      if (cmd) {
-        await hansaka.sendPresenceUpdate('composing', from);
-        
-        // Smart Auto-React based on cmd.react or category
-        const categoryReacts = {
-          'main':    '🤖',
-          'ai':      '🧠',
-          'utility': '⚙️',
-          'owner':   '👑',
-          'download':'⬇️',
-          'fun':     '🎉',
-          'sticker': '🎨',
-          'admin':   '🛡️',
-          'tool':    '🔧',
-        };
-        const reactEmoji = cmd.react || categoryReacts[cmd.category] || '✅';
-        hansaka.sendMessage(from, { react: { text: reactEmoji, key: mek.key } });
+    const groups = [];
+    const chunkSize = 50;
 
-        try {
-          cmd.function(hansaka, mek, m, {
-            from, quoted: mek, body, isCmd, command: finalCommandName, args, q: finalQ,
-            isGroup, sender, senderNumber, botNumber2, botNumber, pushname,
-            isMe, isOwner, groupMetadata, groupName, participants, groupAdmins,
-            isBotAdmins, isAdmins, reply, prefix
-          });
-        } catch (e) {
-          console.error("[PLUGIN ERROR]", e);
+    // Create episode range groups
+    for (let i = 0; i < episodic.length; i += chunkSize) {
+        const chunk = episodic.slice(i, i + chunkSize);
+        const epNums = chunk.map(f => f.epNum).filter(n => !isNaN(n)).sort((a, b) => a - b);
+        let label;
+        if (epNums.length > 1) {
+            label = `Episodes ${epNums[0]} - ${epNums[epNums.length - 1]}`;
+        } else if (epNums.length === 1) {
+            label = `Episode ${epNums[0]}`;
+        } else {
+            label = `Files ${i + 1} - ${i + chunk.length}`;
         }
-      }
+        groups.push({ label, indices: chunk.map(f => f.idx) });
     }
 
-    // Reply handlers already ran above (before AI/cmd processing)
-
-    // Old user welcome logic removed, replaced by Olya AI Registration above.
-  });
-
-  // Group welcome logic completely removed for Olya persona.
-
-  hansaka.ev.on('call', async (calls) => {
-    for (const call of calls) {
-      if (call.status === 'offer') {
-        const from = call.from;
-        console.log(`📞 Rejecting call from: ${from}`);
-        
-        await hansaka.rejectCall(call.id, from);
-        
-        await hansaka.sendMessage(from, { 
-          text: `💙 𝓐𝓼𝓼𝓲𝓼𝓽𝓪𝓷𝓽 𝓞𝓵𝔂𝓪 💞🐝 |
-
-╭───────────────────✨
-│ 📵 *C A L L  D E C L I N E D* 📵
-╰───────────────────✨
-Hello there! I am *Olya*, the Official AI Personal Assistant to *${config.OWNER_NAME}*. 👩‍💻
-
-I sincerely apologize, but as an Artificial Intelligence System, I am *unable to answer voice or video calls*. 🤖🚫
-
-If you have an urgent message or need assistance from *${config.OWNER_NAME}*, please send it as a *Text Message*. ✉️
-I will make sure he receives it immediately! 🚀
-
-© All rights reserved by ${config.OWNER_NAME}'s AI Assistant.`,
-        });
-
-        try {
-            const googleTTS = require("google-tts-api");
-            const axios = require('axios');
-            const audioUrl = googleTTS.getAudioUrl("සමාවෙන්න! මම Olya, හන්සකගේ Assistant. මට කෝල්ස් ගන්න බැහැ. කරුණාකර සමාන්‍ය Text එකකින් හරි Voice මැසේජ් එකකින් හරි ඔයාගේ අදහස යවන්න.", {
-                lang: 'si',
-                slow: false,
-                host: 'https://translate.google.com',
+    // Non-episodic: movies, OVAs, specials
+    if (nonEpisodic.length > 0) {
+        if (nonEpisodic.length <= 12) {
+            // Show each one separately with clean name
+            nonEpisodic.forEach(f => {
+                const clean = cleanDisplayName(f.name);
+                groups.push({ label: clean, indices: [f.idx] });
             });
-            const audioRes = await axios.get(audioUrl, { responseType: 'arraybuffer' });
-            await hansaka.sendMessage(from, { audio: Buffer.from(audioRes.data, 'binary'), mimetype: 'audio/mp4', ptt: true });
-        } catch (e) {
-            console.log("Voice Note Call Error:", e);
+        } else {
+            groups.push({
+                label: `Movies, OVAs & Others (${nonEpisodic.length})`,
+                indices: nonEpisodic.map(f => f.idx)
+            });
         }
-      }
     }
-  });
+
+    if (groups.length === 0) {
+        groups.push({ label: `All Results (${messages.length})`, indices: messages.map((_, i) => i) });
+    }
+
+    return groups;
 }
 
-ensureSessionFile();
+// =============================================
+// POLLINATIONS AI - only for small result sets
+// =============================================
+function askPollinationsAI(prompt) {
+    return new Promise((resolve, reject) => {
+        const encodedPrompt = encodeURIComponent(prompt);
+        const url = `https://text.pollinations.ai/${encodedPrompt}?model=openai&seed=42`;
+        const req = https.get(url, (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => resolve(data.trim()));
+        });
+        req.on('error', reject);
+        req.setTimeout(8000, () => { req.destroy(); reject(new Error('timeout')); });
+    });
+}
 
-app.get("/", (req, res) => {
-  res.send("Hey, Olya Assistant started✅");
+async function groupFilesWithAI(fileNames) {
+    const prompt = `Analyze these anime file names and group them logically.
+Rules:
+- Episodes: group into ranges of ~50 (e.g. "Naruto Episodes 1-50")
+- Movies/OVAs/Specials: show FULL clean file name (remove @tags)
+- Different series: separate groups
+- Return ONLY valid JSON array, no explanation.
+- Format: [{"label": "...", "indices": [0,1,2]}, ...]
+
+Files:
+${fileNames.map((n, i) => `${i}: ${cleanDisplayName(n)}`).join('\n')}`;
+
+    try {
+        const response = await askPollinationsAI(prompt);
+        const jsonMatch = response.match(/\[[\s\S]*\]/);
+        if (jsonMatch) {
+            const parsed = JSON.parse(jsonMatch[0]);
+            if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+        return null;
+    } catch (e) {
+        return null;
+    }
+}
+
+// =============================================
+// FORMAT HELPERS
+// =============================================
+function buildGroupListText(groups, query, total) {
+    let text = `🔍 *"${query}"* - *${total}* ගොනු ලැබුණා!\n\n`;
+    groups.forEach((g, i) => {
+        const count = g.indices.length;
+        const countStr = count > 1 ? ` *(${count})*` : '';
+        text += `${i + 1}. 📂 ${g.label}${countStr}\n`;
+    });
+    text += `\n💬 *Category number reply කරන්න*`;
+    return formatMsg("🎬 Anime Search Results", text);
+}
+
+function buildSubListText(msgs, fileNames, groupLabel, page) {
+    const start = page * PAGE_SIZE;
+    const end = Math.min(start + PAGE_SIZE, msgs.length);
+    const totalPages = Math.ceil(msgs.length / PAGE_SIZE);
+
+    let text = `📂 *${groupLabel}*\n`;
+    if (totalPages > 1) text += `_(Page ${page + 1} / ${totalPages})_\n`;
+    text += `\n`;
+
+    for (let i = start; i < end; i++) {
+        const clean = cleanDisplayName(fileNames[i]);
+        text += `${i + 1}. ${clean}\n`;
+    }
+
+    text += `\n`;
+    if (page > 0) text += `*p* ← කලින් page\n`;
+    if (end < msgs.length) text += `*n* → ඊළඟ page\n`;
+    text += `*0* → category list`;
+    return formatMsg("📋 File List", text);
+}
+
+// =============================================
+// PAGINATED TELEGRAM SEARCH
+// =============================================
+async function searchAllMessages(client, query) {
+    const allMessages = [];
+    let offsetId = 0;
+    const batchSize = 100;
+    const maxBatches = 5;
+
+    for (let i = 0; i < maxBatches; i++) {
+        try {
+            const batch = await client.getMessages(TARGET_CHANNEL, {
+                search: query,
+                limit: batchSize,
+                offsetId: offsetId,
+                filter: new Api.InputMessagesFilterDocument()
+            });
+            if (!batch || batch.length === 0) break;
+            allMessages.push(...batch);
+            offsetId = batch[batch.length - 1].id;
+            if (batch.length < batchSize) break;
+        } catch (e) {
+            console.error("Batch fetch error:", e.message);
+            break;
+        }
+    }
+    return allMessages;
+}
+
+// =============================================
+// MAIN ANIME COMMAND
+// =============================================
+cmd({
+    pattern: "anime",
+    alias: ["getanime", "downloadanime"],
+    desc: "Search and download anime directly from Telegram",
+    category: "anime",
+    react: "🎬"
+}, async (hansaka, mek, m, { q, reply }) => {
+    if (!q) return reply(formatMsg("Missing Input", "Anime නම ලබා දෙන්න!\nExample: .anime Naruto"));
+
+    const jid = m.chat || mek.key.remoteJid;
+    const senderJid = m.sender || mek.key.participant || jid;
+    let loadingMsg;
+    let client;
+
+    try {
+        loadingMsg = await hansaka.sendMessage(jid, { text: `🔍 "${q}" සොයමින්...` });
+
+        client = new TelegramClient(stringSession, apiId, apiHash, { connectionRetries: 5 });
+        await client.connect();
+
+        const messages = await searchAllMessages(client, q);
+        await client.disconnect();
+
+        if (!messages || messages.length === 0) {
+            await deleteMsg(hansaka, jid, loadingMsg.key);
+            return reply(formatMsg("Not Found", `"${q}" හොයාගන්න බැරි වුණා. 😔\nෙවනත් keyword එකක් try කරන්න.`));
+        }
+
+        await hansaka.sendMessage(jid, {
+            text: `✅ *${messages.length}* ගොනු ලැබුණා! Groupings සකසමින්...`,
+            edit: loadingMsg.key
+        });
+
+        // Get raw file names (never use msg.message - copyright risk)
+        const rawFileNames = messages.map(msg => getRawFileName(msg));
+
+        // Smart local grouping (reliable, no API)
+        let groups = smartGroup(messages, rawFileNames);
+
+        // If result set is small, optionally try AI for better labels
+        if (messages.length <= 50) {
+            const aiGroups = await groupFilesWithAI(rawFileNames);
+            if (aiGroups && aiGroups.length > 0) groups = aiGroups;
+        }
+
+        // Save state
+        animeState[senderJid] = {
+            step: "group_select",
+            groups,
+            allMessages: messages,
+            rawFileNames,
+            searchQuery: q,
+            jid
+        };
+
+        await deleteMsg(hansaka, jid, loadingMsg.key);
+        await hansaka.sendMessage(jid, {
+            text: buildGroupListText(groups, q, messages.length)
+        }, { quoted: mek });
+
+    } catch (e) {
+        console.error("Anime Command Error:", e);
+        if (client) { try { await client.disconnect(); } catch (_) { } }
+        await deleteMsg(hansaka, jid, loadingMsg?.key);
+        reply(formatMsg("System Error", `Error: ${e.message}`));
+    }
 });
 
-app.listen(port, () => console.log(`Server listening on http://localhost:${port}`));
+// =============================================
+// REPLY HANDLER - number/nav replies
+// =============================================
+cmd({
+    pattern: undefined,
+    filter: (mek, { sender }) => animeState[sender] !== undefined
+}, async (hansaka, mek, m, { reply, sender, body }) => {
+    const state = animeState[sender];
+    if (!state) return;
+
+    const jid = state.jid || m.chat || mek.key.remoteJid;
+    // Use body from index.js (already extracted & processed)
+    const rawInput = (body || "").trim().toLowerCase();
+
+    // ---- STEP 1: GROUP SELECT ----
+    if (state.step === "group_select") {
+        const num = parseInt(rawInput);
+        if (isNaN(num) || num < 1 || num > state.groups.length) {
+            return reply(formatMsg("Invalid Input", `1 සිට ${state.groups.length} අතර number reply කරන්න.`));
+        }
+
+        const selectedGroup = state.groups[num - 1];
+        const groupMsgs = selectedGroup.indices.map(i => state.allMessages[i]);
+        const groupNames = selectedGroup.indices.map(i => state.rawFileNames[i]);
+
+        state.step = "file_select";
+        state.selectedGroupMsgs = groupMsgs;
+        state.selectedGroupNames = groupNames;
+        state.selectedGroupLabel = selectedGroup.label;
+        state.filePage = 0;
+
+        await hansaka.sendMessage(jid, {
+            text: buildSubListText(groupMsgs, groupNames, selectedGroup.label, 0)
+        }, { quoted: mek });
+        return;
+    }
+
+    // ---- STEP 2: FILE SELECT ----
+    if (state.step === "file_select") {
+        const msgs = state.selectedGroupMsgs;
+        const names = state.selectedGroupNames;
+        const totalPages = Math.ceil(msgs.length / PAGE_SIZE);
+
+        if (rawInput === 'n') {
+            if (state.filePage + 1 >= totalPages) return reply("ඊළඟ page නෑ.");
+            state.filePage++;
+            return await hansaka.sendMessage(jid, {
+                text: buildSubListText(msgs, names, state.selectedGroupLabel, state.filePage)
+            }, { quoted: mek });
+        }
+
+        if (rawInput === 'p') {
+            if (state.filePage <= 0) return reply("කලින් page නෑ.");
+            state.filePage--;
+            return await hansaka.sendMessage(jid, {
+                text: buildSubListText(msgs, names, state.selectedGroupLabel, state.filePage)
+            }, { quoted: mek });
+        }
+
+        if (rawInput === '0') {
+            state.step = "group_select";
+            delete state.selectedGroupMsgs;
+            delete state.selectedGroupNames;
+            delete state.selectedGroupLabel;
+            delete state.filePage;
+            return await hansaka.sendMessage(jid, {
+                text: buildGroupListText(state.groups, state.searchQuery, state.allMessages.length)
+            }, { quoted: mek });
+        }
+
+        const num = parseInt(rawInput);
+        if (isNaN(num) || num < 1 || num > msgs.length) {
+            return reply(formatMsg("Invalid Input",
+                `1 සිට ${msgs.length} අතර number reply කරන්න.\n*n* = ඊළඟ | *p* = කලින් | *0* = ආපහු`
+            ));
+        }
+
+        const selectedMsg = msgs[num - 1];
+        const rawName = names[num - 1];
+
+        // Clear state before download
+        delete animeState[sender];
+
+        let loadingMsg;
+        let client;
+        try {
+            const cleanName = cleanDisplayName(rawName);
+            loadingMsg = await hansaka.sendMessage(jid, {
+                text: `⏳ Download වෙමින්...\n📄 ${cleanName}`
+            }, { quoted: mek });
+
+            client = new TelegramClient(stringSession, apiId, apiHash, { connectionRetries: 5 });
+            await client.connect();
+
+            const parts = rawName.split('.');
+            const ext = '.' + parts.pop();
+            const baseName = parts.join('.');
+            const newFileName = `${baseName}-BY OLYA${ext}`;
+
+            const tempDir = path.join(__dirname, '../temp');
+            if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+            const tempFilePath = path.join(tempDir, newFileName);
+
+            await hansaka.sendMessage(jid, { text: "🚀 WhatsApp Upload කරමින්...", edit: loadingMsg.key });
+
+            const buffer = await client.downloadMedia(selectedMsg, {});
+            fs.writeFileSync(tempFilePath, buffer);
+            await client.disconnect();
+
+            const mimetype = ext.toLowerCase().includes('mkv')
+                ? 'video/x-matroska'
+                : 'video/mp4';
+
+            await hansaka.sendMessage(jid, {
+                document: fs.readFileSync(tempFilePath),
+                mimetype,
+                fileName: newFileName,
+                caption: formatMsg("✅ Download Complete",
+                    `🎬 *${cleanName}*\n📥 Olya x Telegram`
+                )
+            }, { quoted: mek });
+
+            fs.unlinkSync(tempFilePath);
+            await deleteMsg(hansaka, jid, loadingMsg.key);
+
+        } catch (e) {
+            console.error("Anime Download Error:", e);
+            if (client) { try { await client.disconnect(); } catch (_) { } }
+            await deleteMsg(hansaka, jid, loadingMsg?.key);
+            reply(formatMsg("Download Error", `Error: ${e.message}`));
+        }
+    }
+});
+
+module.exports = { animeState };
