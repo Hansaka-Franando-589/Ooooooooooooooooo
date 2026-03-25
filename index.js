@@ -1,4 +1,4 @@
-const { cmd } = require('../command');
+const { cmd } = require('./command');
 const { TelegramClient, Api } = require("telegram");
 const { StringSession } = require("telegram/sessions");
 const fs = require('fs');
