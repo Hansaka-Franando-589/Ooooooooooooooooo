@@ -15,335 +15,328 @@ const stringSession = new StringSession(sessionString);
 const TARGET_CHANNEL = "@animehub6";
 
 // =============================================
-// GLOBAL DESIGNS
+// GLOBAL DESIGN
 // =============================================
 const FOOTER_TEXT = "𝓐𝓼𝓼𝓲𝓼𝓽𝓪𝓷𝓽 𝓞𝓵𝔂𝓪 💞🐝";
 const formatMsg = (title, body) =>
     `✦ ━━━━━━━━━━━━━━━ ✦\n${title}\n\n${body}\n✦ ━━━━━━━━━━━━━━━ ✦\n\n> ${FOOTER_TEXT}`;
-
 const deleteMsg = async (hansaka, jid, key) => {
-    try { if (key) await hansaka.sendMessage(jid, { delete: key }); } catch (e) { }
+    try { if (key) await hansaka.sendMessage(jid, { delete: key }); } catch (_) { }
 };
 
 // =============================================
-// ANIME STATE STORE (per user)
+// STATE - 3-LEVEL HIERARCHY
 // =============================================
+// step: "series_select" → "range_select" → "file_select"
 const animeState = {};
 const PAGE_SIZE = 15;
+const RANGE_SIZE = 50;
+const MAX_BATCHES = 50; // up to 5000 results
 
 // =============================================
-// FILE NAME HELPERS
+// FILE HELPERS
 // =============================================
 function getRawFileName(msg) {
-    if (msg.document && msg.document.attributes) {
+    if (msg.document?.attributes) {
         const attr = msg.document.attributes.find(a => a.className === "DocumentAttributeFilename");
-        if (attr && attr.fileName) return attr.fileName;
+        if (attr?.fileName) return attr.fileName;
     }
-    // Do NOT fall back to msg.message - it can contain copyright content
-    return `Anime_File_${msg.id}`;
+    return `File_${msg.id}`;
 }
 
-// Format bytes to human readable size
 function getFileSize(msg) {
     try {
-        const bytes = msg.document && msg.document.size;
-        if (!bytes) return null;
-        if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(1) + ' GB';
-        if (bytes >= 1048576) return Math.round(bytes / 1048576) + ' MB';
-        return Math.round(bytes / 1024) + ' KB';
-    } catch (e) { return null; }
+        const b = msg.document?.size;
+        if (!b) return '';
+        if (b >= 1073741824) return (b / 1073741824).toFixed(1) + 'GB';
+        if (b >= 1048576) return Math.round(b / 1048576) + 'MB';
+        return Math.round(b / 1024) + 'KB';
+    } catch { return ''; }
 }
 
-// Extract safe display info: episode number + quality + size (no full name = no copyright trigger)
+// Strict episode regex - requires "ep/episode" prefix OR isolated 1-3 digit number
+// Avoids matching 4-digit file IDs, resolutions (720), timestamps etc.
+function extractEpisodeNumber(fileName) {
+    // Priority 1: explicit "Ep" or "Episode" prefix
+    const explicit = fileName.match(/ep(?:isode)?[.\s_-]?(\d{1,4})/i);
+    if (explicit) return parseInt(explicit[1]);
+
+    // Priority 2: isolated 2-3 digit number between separators (not 4 digits = avoid IDs)
+    const isolated = fileName.match(/(?:^|[-_\s])(\d{2,3})(?:[-_\s]|$)/);
+    if (isolated) return parseInt(isolated[1]);
+
+    return null;
+}
+
 function getEpisodeDisplay(rawName, msg) {
-    // Episode number
-    const epMatch = rawName.match(/ep(?:isode)?[.\s_-]?(\d+)/i)
-        || rawName.match(/[\s._-](\d{2,4})[\s._-]/i);
-    const epNum = epMatch ? epMatch[1] : null;
-
-    // Quality
+    const epNum = extractEpisodeNumber(rawName);
     const qualMatch = rawName.match(/(\d{3,4}p)/i);
-    const quality = qualMatch ? qualMatch[1] : null;
-
-    // Extension
-    const extMatch = rawName.match(/\.([a-z0-9]{2,4})$/i);
-    const ext = extMatch ? extMatch[1].toUpperCase() : '';
-
-    // File size
     const size = getFileSize(msg);
-
-    // Build safe display string
-    let parts = [];
-    if (epNum) parts.push(`Ep.${epNum}`);
-    else {
-        // No episode number - strip @mentions only, show short name
-        let safe = rawName.replace(/@[\w._-]+/g, '').trim();
-        safe = safe.replace(/\s{2,}/g, ' ').trim().substring(0, 35);
-        parts.push(safe || `File`);
-    }
-    if (quality) parts.push(quality);
-    else if (ext && ['MKV','MP4','AVI'].includes(ext)) parts.push(ext);
+    const parts = [];
+    if (epNum !== null) parts.push(`Ep.${epNum}`);
+    else parts.push(rawName.replace(/@[\w._-]+/g, '').trim().substring(0, 30));
+    if (qualMatch) parts.push(qualMatch[1]);
     if (size) parts.push(size);
-
     return parts.join(' | ');
 }
 
-// Keep for group label use
-function cleanDisplayName(rawName) {
-    let name = rawName
-        .replace(/@[\w._-]+/g, '')
-        .replace(/\[[^\]]{0,30}\]/g, '')
-        .replace(/\s{2,}/g, ' ').trim();
-    if (name.length > 60) name = name.substring(0, 57) + '...';
-    return name || rawName.substring(0, 50);
-}
-
 // =============================================
-// SMART LOCAL GROUPING (no AI needed)
-// Groups episodes into ranges, keeps others separately
-// =============================================
-function smartGroup(messages, fileNames) {
-    // Episode detection patterns
-    const epPattern = /(?:ep(?:isode)?s?|e)[.\s_-]?(\d+)(?!\d)|[.\s_-](\d{2,4})[.\s_-]/i;
-
-    const episodic = [];
-    const nonEpisodic = [];
-
-    messages.forEach((msg, i) => {
-        const name = fileNames[i];
-        const match = name.match(epPattern);
-        if (match) {
-            const epNum = parseInt(match[1] || match[2]);
-            episodic.push({ msg, idx: i, epNum, name });
-        } else {
-            nonEpisodic.push({ msg, idx: i, name });
-        }
-    });
-
-    // Sort episodes by number
-    episodic.sort((a, b) => a.epNum - b.epNum);
-
-    const groups = [];
-    const chunkSize = 50;
-
-    // Create episode range groups
-    for (let i = 0; i < episodic.length; i += chunkSize) {
-        const chunk = episodic.slice(i, i + chunkSize);
-        const epNums = chunk.map(f => f.epNum).filter(n => !isNaN(n)).sort((a, b) => a - b);
-        let label;
-        if (epNums.length > 1) {
-            label = `Episodes ${epNums[0]} - ${epNums[epNums.length - 1]}`;
-        } else if (epNums.length === 1) {
-            label = `Episode ${epNums[0]}`;
-        } else {
-            label = `Files ${i + 1} - ${i + chunk.length}`;
-        }
-        groups.push({ label, indices: chunk.map(f => f.idx) });
-    }
-
-    // Non-episodic: movies, OVAs, specials
-    if (nonEpisodic.length > 0) {
-        if (nonEpisodic.length <= 12) {
-            // Show each one separately with clean name
-            nonEpisodic.forEach(f => {
-                const clean = cleanDisplayName(f.name);
-                groups.push({ label: clean, indices: [f.idx] });
-            });
-        } else {
-            groups.push({
-                label: `Movies, OVAs & Others (${nonEpisodic.length})`,
-                indices: nonEpisodic.map(f => f.idx)
-            });
-        }
-    }
-
-    if (groups.length === 0) {
-        groups.push({ label: `All Results (${messages.length})`, indices: messages.map((_, i) => i) });
-    }
-
-    return groups;
-}
-
-// =============================================
-// POLLINATIONS AI - only for small result sets
+// POLLINATIONS AI
 // =============================================
 function askPollinationsAI(prompt) {
     return new Promise((resolve, reject) => {
-        const encodedPrompt = encodeURIComponent(prompt);
-        const url = `https://text.pollinations.ai/${encodedPrompt}?model=openai&seed=42`;
-        const req = https.get(url, (res) => {
+        const url = `https://text.pollinations.ai/${encodeURIComponent(prompt)}?model=openai&seed=42`;
+        const req = https.get(url, res => {
             let data = '';
-            res.on('data', chunk => data += chunk);
+            res.on('data', c => data += c);
             res.on('end', () => resolve(data.trim()));
         });
         req.on('error', reject);
-        req.setTimeout(8000, () => { req.destroy(); reject(new Error('timeout')); });
+        req.setTimeout(10000, () => { req.destroy(); reject(new Error('AI timeout')); });
     });
 }
 
-async function groupFilesWithAI(fileNames) {
-    const prompt = `Analyze these anime file names and group them logically.
-Rules:
-- Episodes: group into ranges of ~50 (e.g. "Naruto Episodes 1-50")
-- Movies/OVAs/Specials: show FULL clean file name (remove @tags)
-- Different series: separate groups
-- Return ONLY valid JSON array, no explanation.
-- Format: [{"label": "...", "indices": [0,1,2]}, ...]
+// Detect distinct sub-series from a sample of file names
+async function detectSubSeries(fileNames, query) {
+    const sample = fileNames.slice(0, 80).map((n, i) =>
+        `${i}: ${n.replace(/@[\w._-]+/g, '').trim().substring(0, 60)}`
+    ).join('\n');
 
-Files:
-${fileNames.map((n, i) => `${i}: ${cleanDisplayName(n)}`).join('\n')}`;
+    const prompt = `These are anime file names from a search for "${query}".
+Identify the distinct sub-series, seasons, or categories present (e.g. "Boruto: Naruto Next Generations", "Boruto Movies", "Boruto Dub").
+Return ONLY a JSON string array. No explanation. Max 8 items.
+Example: ["Series A", "Series B Movies"]
+Files:\n${sample}`;
 
     try {
-        const response = await askPollinationsAI(prompt);
-        const jsonMatch = response.match(/\[[\s\S]*\]/);
-        if (jsonMatch) {
-            const parsed = JSON.parse(jsonMatch[0]);
-            if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        const res = await askPollinationsAI(prompt);
+        const match = res.match(/\[[\s\S]*?\]/);
+        if (match) {
+            const arr = JSON.parse(match[0]);
+            if (Array.isArray(arr) && arr.length > 0) return arr;
         }
-        return null;
     } catch (e) {
-        return null;
+        console.error('AI sub-series error:', e.message);
     }
+    return null;
+}
+
+// Assign files to sub-series using keyword matching
+function assignFilesToSeries(messages, fileNames, seriesLabels) {
+    const groups = seriesLabels.map(label => ({
+        label,
+        // Extract meaningful keywords from label (skip short words)
+        keywords: label.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(w => w.length >= 3),
+        msgs: [],
+        names: []
+    }));
+    const others = { label: 'Others', msgs: [], names: [] };
+
+    fileNames.forEach((name, i) => {
+        const nameLower = name.toLowerCase();
+        let bestGroup = null;
+        let bestScore = 0;
+
+        groups.forEach(g => {
+            const score = g.keywords.reduce((s, kw) => s + (nameLower.includes(kw) ? 1 : 0), 0);
+            if (score > bestScore) { bestScore = score; bestGroup = g; }
+        });
+
+        if (bestGroup && bestScore > 0) {
+            bestGroup.msgs.push(messages[i]);
+            bestGroup.names.push(name);
+        } else {
+            others.msgs.push(messages[i]);
+            others.names.push(name);
+        }
+    });
+
+    const result = groups.filter(g => g.msgs.length > 0);
+    if (others.msgs.length > 0) result.push(others);
+    return result;
+}
+
+// Build episode ranges within a selected sub-series
+function buildEpisodeRanges(msgs, names) {
+    const episodic = [];
+    const nonEpisodic = [];
+
+    msgs.forEach((msg, i) => {
+        const epNum = extractEpisodeNumber(names[i]);
+        if (epNum !== null) {
+            episodic.push({ msg, name: names[i], epNum });
+        } else {
+            nonEpisodic.push({ msg, name: names[i] });
+        }
+    });
+
+    episodic.sort((a, b) => a.epNum - b.epNum);
+
+    const ranges = [];
+    for (let i = 0; i < episodic.length; i += RANGE_SIZE) {
+        const chunk = episodic.slice(i, i + RANGE_SIZE);
+        const nums = chunk.map(f => f.epNum).sort((a, b) => a - b);
+        ranges.push({
+            label: nums.length > 1 ? `Episodes ${nums[0]} - ${nums[nums.length - 1]}` : `Episode ${nums[0]}`,
+            msgs: chunk.map(f => f.msg),
+            names: chunk.map(f => f.name)
+        });
+    }
+    if (nonEpisodic.length > 0) {
+        ranges.push({
+            label: `Movies & Specials (${nonEpisodic.length})`,
+            msgs: nonEpisodic.map(f => f.msg),
+            names: nonEpisodic.map(f => f.name)
+        });
+    }
+    return ranges.length > 0 ? ranges : [{ label: 'All Files', msgs, names }];
 }
 
 // =============================================
-// FORMAT HELPERS
+// TEXT BUILDERS
 // =============================================
-function buildGroupListText(groups, query, total) {
-    let text = `🔍 *"${query}"* - *${total}* ගොනු ලැබුණා!\n\n`;
-    groups.forEach((g, i) => {
-        const count = g.indices.length;
-        const countStr = count > 1 ? ` *(${count})*` : '';
-        text += `${i + 1}. 📂 ${g.label}${countStr}\n`;
+function buildSeriesList(seriesGroups, query, total) {
+    let text = `🔍 *"${query}"* - *${total}* ගොනු\n\n`;
+    seriesGroups.forEach((g, i) => {
+        text += `${i + 1}. 📂 ${g.label} *(${g.msgs.length})*\n`;
     });
-    text += `\n💬 *Category number reply කරන්න*`;
+    text += `\n💬 *Series number reply කරන්න*`;
     return formatMsg("🎬 Anime Search Results", text);
 }
 
-function buildSubListText(msgs, fileNames, groupLabel, page) {
+function buildRangeList(ranges, seriesLabel) {
+    let text = `📂 *${seriesLabel}*\n\n`;
+    ranges.forEach((r, i) => {
+        text += `${i + 1}. 🗂️ ${r.label}\n`;
+    });
+    text += `\n💬 *Range number reply කරන්න*\n*0* → series list`;
+    return formatMsg("📋 Episode Ranges", text);
+}
+
+function buildFileList(msgs, names, rangeLabel, page) {
     const start = page * PAGE_SIZE;
     const end = Math.min(start + PAGE_SIZE, msgs.length);
     const totalPages = Math.ceil(msgs.length / PAGE_SIZE);
-
-    let text = `📂 *${groupLabel}*\n`;
-    if (totalPages > 1) text += `_(Page ${page + 1} / ${totalPages})_\n`;
-    text += `\n`;
-
+    let text = `🗂️ *${rangeLabel}*\n`;
+    if (totalPages > 1) text += `_(${page + 1}/${totalPages} page)_\n`;
+    text += '\n';
     for (let i = start; i < end; i++) {
-        // Safe display: episode number + quality + size (no copyrighted full titles)
-        const display = getEpisodeDisplay(fileNames[i], msgs[i]);
-        text += `${i + 1}. 🎬 ${display}\n`;
+        text += `${i + 1}. 🎬 ${getEpisodeDisplay(names[i], msgs[i])}\n`;
     }
+    text += '\n';
+    if (page > 0) text += `*p* ← කලින\n`;
+    if (end < msgs.length) text += `*n* → ඊළඟ\n`;
+    text += `*0* → range list`;
+    return formatMsg("📄 File List", text);
+}
 
-    text += `\n`;
-    if (page > 0) text += `*p* ← කලින් page\n`;
-    if (end < msgs.length) text += `*n* → ඊළඟ page\n`;
-    text += `*0* → category list`;
-    return formatMsg("📋 File List", text);
+function buildProgressBar(percent) {
+    const filled = Math.floor(percent / 5);
+    return '█'.repeat(filled) + '░'.repeat(20 - filled);
 }
 
 // =============================================
-// PAGINATED TELEGRAM SEARCH
+// PAGINATED TELEGRAM SEARCH (up to 5000)
 // =============================================
-async function searchAllMessages(client, query) {
-    const allMessages = [];
+async function searchAllMessages(client, query, onProgress) {
+    const all = [];
     let offsetId = 0;
-    const batchSize = 100;
-    const maxBatches = 5;
-
-    for (let i = 0; i < maxBatches; i++) {
-        try {
-            const batch = await client.getMessages(TARGET_CHANNEL, {
-                search: query,
-                limit: batchSize,
-                offsetId: offsetId,
-                filter: new Api.InputMessagesFilterDocument()
-            });
-            if (!batch || batch.length === 0) break;
-            allMessages.push(...batch);
-            offsetId = batch[batch.length - 1].id;
-            if (batch.length < batchSize) break;
-        } catch (e) {
-            console.error("Batch fetch error:", e.message);
-            break;
-        }
+    for (let i = 0; i < MAX_BATCHES; i++) {
+        const batch = await client.getMessages(TARGET_CHANNEL, {
+            search: query,
+            limit: 100,
+            offsetId,
+            filter: new Api.InputMessagesFilterDocument()
+        }).catch(() => []);
+        if (!batch || batch.length === 0) break;
+        all.push(...batch);
+        offsetId = batch[batch.length - 1].id;
+        if (onProgress) onProgress(all.length);
+        if (batch.length < 100) break;
     }
-    return allMessages;
+    return all;
 }
 
 // =============================================
-// MAIN ANIME COMMAND
+// MAIN COMMAND
 // =============================================
 cmd({
     pattern: "anime",
     alias: ["getanime", "downloadanime"],
-    desc: "Search and download anime directly from Telegram",
+    desc: "Search and download anime from Telegram",
     category: "anime",
     react: "🎬"
 }, async (hansaka, mek, m, { q, reply }) => {
-    if (!q) return reply(formatMsg("Missing Input", "Anime නම ලබා දෙන්න!\nExample: .anime Naruto"));
+    if (!q) return reply(formatMsg("Missing Input", "Anime නම දෙන්න!\nExample: .anime Boruto"));
 
     const jid = m.chat || mek.key.remoteJid;
     const senderJid = m.sender || mek.key.participant || jid;
-    let loadingMsg;
-    let client;
+    let loadingMsg, client;
 
     try {
-        loadingMsg = await hansaka.sendMessage(jid, { text: `🔍 "${q}" සොයමින්...` });
+        loadingMsg = await hansaka.sendMessage(jid, { text: `🔍 *"${q}"* සෙවෙමින්...` });
 
         client = new TelegramClient(stringSession, apiId, apiHash, { connectionRetries: 5 });
         await client.connect();
 
-        const messages = await searchAllMessages(client, q);
+        let lastProgressTime = 0;
+        const messages = await searchAllMessages(client, q, async (count) => {
+            const now = Date.now();
+            if (now - lastProgressTime > 3000) {
+                lastProgressTime = now;
+                await hansaka.sendMessage(jid, {
+                    text: `🔍 *${count}* ගොනු ලැබුණා, ගොනු *${q}* සොයමින්...`,
+                    edit: loadingMsg.key
+                }).catch(() => {});
+            }
+        });
+
         await client.disconnect();
 
-        if (!messages || messages.length === 0) {
+        if (!messages?.length) {
             await deleteMsg(hansaka, jid, loadingMsg.key);
-            return reply(formatMsg("Not Found", `"${q}" හොයාගන්න බැරි වුණා. 😔\nෙවනත් keyword එකක් try කරන්න.`));
+            return reply(formatMsg("Not Found", `*"${q}"* හොයාගන්න බැරි වුණා. 😔`));
         }
 
         await hansaka.sendMessage(jid, {
-            text: `✅ *${messages.length}* ගොනු ලැබුණා! Groupings සකසමින්...`,
+            text: `✅ *${messages.length}* ගොනු! AI ලෙස sub-series හඳුනාගනිමින්... 🤖`,
             edit: loadingMsg.key
         });
 
-        // Get raw file names (never use msg.message - copyright risk)
-        const rawFileNames = messages.map(msg => getRawFileName(msg));
+        const rawFileNames = messages.map(getRawFileName);
 
-        // Smart local grouping (reliable, no API)
-        let groups = smartGroup(messages, rawFileNames);
-
-        // If result set is small, optionally try AI for better labels
-        if (messages.length <= 50) {
-            const aiGroups = await groupFilesWithAI(rawFileNames);
-            if (aiGroups && aiGroups.length > 0) groups = aiGroups;
+        // Level 1: AI detects sub-series
+        const seriesLabels = await detectSubSeries(rawFileNames, q);
+        let seriesGroups;
+        if (seriesLabels && seriesLabels.length > 1) {
+            seriesGroups = assignFilesToSeries(messages, rawFileNames, seriesLabels);
+        } else {
+            // Fallback: single group, go straight to ranges
+            seriesGroups = [{ label: q, msgs: messages, names: rawFileNames }];
         }
 
-        // Save state
         animeState[senderJid] = {
-            step: "group_select",
-            groups,
-            allMessages: messages,
-            rawFileNames,
+            step: "series_select",
+            seriesGroups,
             searchQuery: q,
             jid
         };
 
         await deleteMsg(hansaka, jid, loadingMsg.key);
         await hansaka.sendMessage(jid, {
-            text: buildGroupListText(groups, q, messages.length)
+            text: buildSeriesList(seriesGroups, q, messages.length)
         }, { quoted: mek });
 
     } catch (e) {
-        console.error("Anime Command Error:", e);
-        if (client) { try { await client.disconnect(); } catch (_) { } }
+        console.error("Anime Error:", e);
+        if (client) try { await client.disconnect(); } catch (_) {}
         await deleteMsg(hansaka, jid, loadingMsg?.key);
-        reply(formatMsg("System Error", `Error: ${e.message}`));
+        reply(formatMsg("Error", e.message));
     }
 });
 
 // =============================================
-// REPLY HANDLER - number/nav replies
+// REPLY HANDLER - 3-level navigation
 // =============================================
 cmd({
     pattern: undefined,
@@ -353,84 +346,101 @@ cmd({
     if (!state) return;
 
     const jid = state.jid || m.chat || mek.key.remoteJid;
-    // Use body from index.js (already extracted & processed)
-    const rawInput = (body || "").trim().toLowerCase();
+    const raw = (body || '').trim().toLowerCase();
 
-    // ---- STEP 1: GROUP SELECT ----
-    if (state.step === "group_select") {
-        const num = parseInt(rawInput);
-        if (isNaN(num) || num < 1 || num > state.groups.length) {
-            return reply(formatMsg("Invalid Input", `1 සිට ${state.groups.length} අතර number reply කරන්න.`));
-        }
+    // ==================
+    // LEVEL 1: Series
+    // ==================
+    if (state.step === 'series_select') {
+        const n = parseInt(raw);
+        if (isNaN(n) || n < 1 || n > state.seriesGroups.length)
+            return reply(formatMsg("Invalid", `1 සිට ${state.seriesGroups.length} reply කරන්න.`));
 
-        const selectedGroup = state.groups[num - 1];
-        const groupMsgs = selectedGroup.indices.map(i => state.allMessages[i]);
-        const groupNames = selectedGroup.indices.map(i => state.rawFileNames[i]);
+        const chosen = state.seriesGroups[n - 1];
+        const ranges = buildEpisodeRanges(chosen.msgs, chosen.names);
 
-        state.step = "file_select";
-        state.selectedGroupMsgs = groupMsgs;
-        state.selectedGroupNames = groupNames;
-        state.selectedGroupLabel = selectedGroup.label;
-        state.filePage = 0;
+        state.step = 'range_select';
+        state.selectedSeries = { label: chosen.label, msgs: chosen.msgs, names: chosen.names };
+        state.episodeRanges = ranges;
 
-        await hansaka.sendMessage(jid, {
-            text: buildSubListText(groupMsgs, groupNames, selectedGroup.label, 0)
+        return await hansaka.sendMessage(jid, {
+            text: buildRangeList(ranges, chosen.label)
         }, { quoted: mek });
-        return;
     }
 
-    // ---- STEP 2: FILE SELECT ----
-    if (state.step === "file_select") {
-        const msgs = state.selectedGroupMsgs;
-        const names = state.selectedGroupNames;
-        const totalPages = Math.ceil(msgs.length / PAGE_SIZE);
-
-        if (rawInput === 'n') {
-            if (state.filePage + 1 >= totalPages) return reply("ඊළඟ page නෑ.");
-            state.filePage++;
+    // ==================
+    // LEVEL 2: Ranges
+    // ==================
+    if (state.step === 'range_select') {
+        if (raw === '0') {
+            state.step = 'series_select';
+            delete state.selectedSeries;
+            delete state.episodeRanges;
             return await hansaka.sendMessage(jid, {
-                text: buildSubListText(msgs, names, state.selectedGroupLabel, state.filePage)
+                text: buildSeriesList(state.seriesGroups, state.searchQuery, state.seriesGroups.reduce((s, g) => s + g.msgs.length, 0))
             }, { quoted: mek });
         }
 
-        if (rawInput === 'p') {
+        const n = parseInt(raw);
+        if (isNaN(n) || n < 1 || n > state.episodeRanges.length)
+            return reply(formatMsg("Invalid", `1 සිට ${state.episodeRanges.length} reply කරන්න.\n*0* → ආපහු`));
+
+        const range = state.episodeRanges[n - 1];
+        state.step = 'file_select';
+        state.selectedRange = range;
+        state.filePage = 0;
+
+        return await hansaka.sendMessage(jid, {
+            text: buildFileList(range.msgs, range.names, range.label, 0)
+        }, { quoted: mek });
+    }
+
+    // ==================
+    // LEVEL 3: Files
+    // ==================
+    if (state.step === 'file_select') {
+        const { msgs, names, label } = state.selectedRange;
+
+        if (raw === 'n') {
+            if (state.filePage + 1 >= Math.ceil(msgs.length / PAGE_SIZE))
+                return reply("ඊළඟ page නෑ.");
+            state.filePage++;
+            return await hansaka.sendMessage(jid, {
+                text: buildFileList(msgs, names, label, state.filePage)
+            }, { quoted: mek });
+        }
+        if (raw === 'p') {
             if (state.filePage <= 0) return reply("කලින් page නෑ.");
             state.filePage--;
             return await hansaka.sendMessage(jid, {
-                text: buildSubListText(msgs, names, state.selectedGroupLabel, state.filePage)
+                text: buildFileList(msgs, names, label, state.filePage)
             }, { quoted: mek });
         }
-
-        if (rawInput === '0') {
-            state.step = "group_select";
-            delete state.selectedGroupMsgs;
-            delete state.selectedGroupNames;
-            delete state.selectedGroupLabel;
+        if (raw === '0') {
+            state.step = 'range_select';
+            delete state.selectedRange;
             delete state.filePage;
             return await hansaka.sendMessage(jid, {
-                text: buildGroupListText(state.groups, state.searchQuery, state.allMessages.length)
+                text: buildRangeList(state.episodeRanges, state.selectedSeries.label)
             }, { quoted: mek });
         }
 
-        const num = parseInt(rawInput);
-        if (isNaN(num) || num < 1 || num > msgs.length) {
-            return reply(formatMsg("Invalid Input",
-                `1 සිට ${msgs.length} අතර number reply කරන්න.\n*n* = ඊළඟ | *p* = කලින් | *0* = ආපහු`
-            ));
-        }
+        const n = parseInt(raw);
+        if (isNaN(n) || n < 1 || n > msgs.length)
+            return reply(formatMsg("Invalid", `1 සිට ${msgs.length} reply කරන්න.\n*n/p* = page | *0* = ආපහු`));
 
-        const selectedMsg = msgs[num - 1];
-        const rawName = names[num - 1];
+        const selectedMsg = msgs[n - 1];
+        const rawName = names[n - 1];
 
-        // Clear state before download
         delete animeState[sender];
 
-        let loadingMsg;
-        let client;
+        let loadingMsg, client;
         try {
-            const cleanName = cleanDisplayName(rawName);
+            const sizeStr = getFileSize(selectedMsg);
+            const epDisplay = getEpisodeDisplay(rawName, selectedMsg);
+
             loadingMsg = await hansaka.sendMessage(jid, {
-                text: `⏳ Download වෙමින්...\n📄 ${cleanName}`
+                text: `⏬ *Download Starting...*\n\n${'░'.repeat(20)}\n📊 *0%*\n🎬 ${epDisplay}${sizeStr ? `\n💾 ${sizeStr}` : ''}`
             }, { quoted: mek });
 
             client = new TelegramClient(stringSession, apiId, apiHash, { connectionRetries: 5 });
@@ -445,33 +455,50 @@ cmd({
             if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
             const tempFilePath = path.join(tempDir, newFileName);
 
-            await hansaka.sendMessage(jid, { text: "🚀 WhatsApp Upload කරමින්...", edit: loadingMsg.key });
+            // Live progress bar during download
+            let lastEditTime = 0;
+            let lastPercent = -10;
 
-            const buffer = await client.downloadMedia(selectedMsg, {});
+            const buffer = await client.downloadMedia(selectedMsg, {
+                progressCallback: async (received, total) => {
+                    const now = Date.now();
+                    const percent = total > 0 ? Math.floor((received / total) * 100) : 0;
+                    if (percent >= lastPercent + 10 && now - lastEditTime > 3000) {
+                        lastPercent = percent;
+                        lastEditTime = now;
+                        const bar = buildProgressBar(percent);
+                        await hansaka.sendMessage(jid, {
+                            text: `⏬ *Downloading...*\n\n${bar}\n📊 *${percent}%*\n🎬 ${epDisplay}${sizeStr ? `\n💾 ${sizeStr}` : ''}`,
+                            edit: loadingMsg.key
+                        }).catch(() => {});
+                    }
+                }
+            });
+
             fs.writeFileSync(tempFilePath, buffer);
             await client.disconnect();
 
-            const mimetype = ext.toLowerCase().includes('mkv')
-                ? 'video/x-matroska'
-                : 'video/mp4';
+            await hansaka.sendMessage(jid, {
+                text: `🚀 *Upload to WhatsApp...*\n\n${'█'.repeat(20)}\n📊 *100%* ✅`,
+                edit: loadingMsg.key
+            }).catch(() => {});
 
+            const mimetype = ext.toLowerCase().includes('mkv') ? 'video/x-matroska' : 'video/mp4';
             await hansaka.sendMessage(jid, {
                 document: fs.readFileSync(tempFilePath),
                 mimetype,
                 fileName: newFileName,
-                caption: formatMsg("✅ Download Complete",
-                    `🎬 *${cleanName}*\n📥 Olya x Telegram`
-                )
+                caption: formatMsg("✅ Download Complete", `🎬 ${epDisplay}\n📥 Olya x Telegram`)
             }, { quoted: mek });
 
             fs.unlinkSync(tempFilePath);
             await deleteMsg(hansaka, jid, loadingMsg.key);
 
         } catch (e) {
-            console.error("Anime Download Error:", e);
-            if (client) { try { await client.disconnect(); } catch (_) { } }
+            console.error("Download Error:", e);
+            if (client) try { await client.disconnect(); } catch (_) {}
             await deleteMsg(hansaka, jid, loadingMsg?.key);
-            reply(formatMsg("Download Error", `Error: ${e.message}`));
+            reply(formatMsg("Download Error", e.message));
         }
     }
 });
