@@ -15,11 +15,36 @@ const stringSession = new StringSession(sessionString);
 const TARGET_CHANNEL = "@animehub6";
 
 // =============================================
-// GLOBAL STATE & VARIABLES
+// GLOBAL TELEGRAM CLIENT (CRASH FIX!)
+// =============================================
+// Bot Crash වීම නැවැත්වීම සඳහා එකම Client කෙනෙක්ව දිගටම භාවිතා කිරීම.
+let globalTgClient = null;
+let isConnecting = false;
+
+async function getTelegramClient() {
+    if (globalTgClient && globalTgClient.connected) return globalTgClient;
+    if (isConnecting) {
+        while (isConnecting) await new Promise(r => setTimeout(r, 500));
+        return globalTgClient;
+    }
+    isConnecting = true;
+    try {
+        console.log("[AnimeDL] Connecting to Telegram Datacenter...");
+        const client = new TelegramClient(stringSession, apiId, apiHash, { connectionRetries: 5 });
+        await client.connect();
+        globalTgClient = client;
+        console.log("[AnimeDL] Telegram Connected Successfully!");
+    } catch (err) {
+        console.error("[AnimeDL] Telegram Connection Error:", err);
+    }
+    isConnecting = false;
+    return globalTgClient;
+}
+
+// =============================================
+// GLOBAL STATE
 // =============================================
 const userAnimeSessions = {};
-let globalHansaka = null;
-let isRawListenerAttached = false;
 
 // =============================================
 // HELPER FUNCTIONS
@@ -40,7 +65,7 @@ const getSeriesName = (filename) => {
     return sName || "Anime Series";
 };
 
-const sendChunkSelection = async (client, jid, session, msg) => {
+const sendChunkSelection = async (hansaka, from, session, mek) => {
     let totalEps = session.episodes.length;
     let listText = `✦ ━━━━━━━━━━━━━━━ ✦
    *📁 Series Selected: ${session.selectedSeries}*
@@ -56,26 +81,24 @@ const sendChunkSelection = async (client, jid, session, msg) => {
         listText += `*${i + 1}️⃣* කථාංග ${start} සිට ${end} දක්වා\n`;
     }
     listText += `\n> 🧚‍♀️ 𝒫𝑜𝓌𝑒𝓇𝑒𝒹 𝐵𝓎 𝒪𝐿𝒴𝒜 𝒮𝑒𝓇𝓋𝑒𝓇`;
-    await client.sendMessage(jid, { text: listText }, { quoted: msg });
+    await hansaka.sendMessage(from, { text: listText }, { quoted: mek });
 };
 
 // =============================================
-// MEMORY-SAFE DOWNLOAD FUNCTION
+// MEMORY-SAFE DOWNLOAD & UPLOAD FUNCTION
 // =============================================
-async function downloadAndSendAnime(client, jid, selectedEp, msg) {
-    let progMsg = await client.sendMessage(jid, { text: "✦ ━━━━━━━━━━━━━━ ✦\n📶 *Connecting to Datacenter...*\n✦ ━━━━━━━━━━━━━━ ✦\n\nඕල්යා පද්ධතිය ගොනුව බාගත කිරීම සඳහා සූදානම් වෙමින් පවතී..." }, { quoted: msg });
+async function downloadAndSendAnime(hansaka, from, selectedEp, mek) {
+    let progMsg = await hansaka.sendMessage(from, { text: "✦ ━━━━━━━━━━━━━━ ✦\n📶 *Connecting to Datacenter...*\n✦ ━━━━━━━━━━━━━━ ✦\n\nඕල්යා පද්ධතිය ගොනුව බාගත කිරීම සඳහා සූදානම් වෙමින් පවතී..." }, { quoted: mek });
     const eKey = progMsg.key;
     
-    let tgClient;
     let tempFilePath;
     try {
-        tgClient = new TelegramClient(stringSession, apiId, apiHash, { connectionRetries: 5 });
-        await tgClient.connect();
+        const tgClient = await getTelegramClient();
+        if (!tgClient) throw new Error("Telegram Datacenter අක්‍රියයි.");
 
         const msgs = await tgClient.getMessages(TARGET_CHANNEL, { ids: [selectedEp.msgId] });
         if (!msgs || msgs.length === 0 || !msgs[0]) {
-            await tgClient.disconnect();
-            return client.sendMessage(jid, { text: "⚠️ දෝෂයකි: ගොනුව සොයාගත නොහැක.", edit: eKey });
+            return hansaka.sendMessage(from, { text: "⚠️ දෝෂයකි: ගොනුව සොයාගත නොහැක.", edit: eKey });
         }
         const episodeMsgObj = msgs[0];
 
@@ -89,10 +112,6 @@ async function downloadAndSendAnime(client, jid, selectedEp, msg) {
         const FINAL_CAPTION = `✧ ━━ 𝓞𝓛𝓨𝓐 𝓐𝓝𝓘𝓜𝓔 𝓓𝓞𝓦𝓝𝓛𝓞𝓐𝓓𝓔𝓡 ━━ ✧
    [ 𝗔𝗱𝘃𝗮𝗻𝗰𝗲𝗱 𝗔𝗜 𝗥𝗲𝘁𝗿𝗶𝗲𝘃𝗮𝗹 𝗦𝘆𝘀𝘁𝗲𝗺 ]
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-[⚙️] පද්ධති විශ්ලේෂණය (System Analysis):
-───────────────────────────
-මෙය ඕල්යා කෘත්‍රිම බුද්ධි පද්ධතිය හරහා ජනනය කරන ලද ස්වයංක්‍රීය පණිවිඩයකි. OOM (Out-of-Memory) සීමාවන් බිඳ දමමින් මෙම ගොනුව සාර්ථකව උඩුගත කරන ලදී.
 
 [📁] ගොනු තොරතුරු (File Specifications):
 ───────────────────────────
@@ -148,7 +167,7 @@ ${barStr} ${pct}%
 ⚡ වේගය: ${speedStr}
 
 > 🧚‍♀️ 𝒫𝑜𝓌𝑒𝓇𝑒𝒹 𝐵𝓎 𝒪𝐿𝒴𝒜 𝒮𝑒𝓇𝓋𝑒𝓇`;
-                    await client.sendMessage(jid, { text: txt, edit: eKey }).catch(()=>{});
+                    await hansaka.sendMessage(from, { text: txt, edit: eKey }).catch(()=>{});
                 }
             }
         }
@@ -156,13 +175,11 @@ ${barStr} ${pct}%
         fileWriter.end();
         await new Promise((resolve) => fileWriter.once('finish', resolve));
 
-        // Background Timeout Error එක මගහරවා ගැනීමට වහාම Disconnect කිරීම
-        await tgClient.disconnect().catch(()=>{});
+        await hansaka.sendMessage(from, { text: "✦ ━━━━━━━━━━━━ ✦\n✅ ගොනුව සුරක්ෂිතව තැටියට ලියවා ඇත. දත්ත ධාරාවක් (Stream) හරහා උඩුගත කිරීම ආරම්භ වේ...\n✦ ━━━━━━━━━━━━ ✦", edit: eKey }).catch(()=>{});
 
-        await client.sendMessage(jid, { text: "✦ ━━━━━━━━━━━━ ✦\n✅ ගොනුව සුරක්ෂිතව තැටියට ලියවා ඇත. උඩුගත කිරීම (Upload) ආරම්භ වේ...\n✦ ━━━━━━━━━━━━ ✦", edit: eKey }).catch(()=>{});
-
+        // OOM එකෙන් බේරෙන්න ReadStream පාවිච්චි කිරීම!
         let sendObj = {
-            document: { url: tempFilePath },
+            document: { stream: fs.createReadStream(tempFilePath) }, 
             mimetype: selectedEp.ext.includes('mkv') ? 'video/x-matroska' : 'video/mp4',
             fileName: newFileName,
             caption: FINAL_CAPTION
@@ -179,20 +196,19 @@ ${barStr} ${pct}%
             };
         }
 
-        await client.sendMessage(jid, sendObj, { quoted: msg });
+        await hansaka.sendMessage(from, sendObj, { quoted: mek });
         if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-        try { await client.sendMessage(jid, { delete: eKey }); } catch(err){}
+        try { await hansaka.sendMessage(from, { delete: eKey }); } catch(err){}
 
     } catch(err) {
         console.error("Download Error:", err);
         if (tempFilePath && fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-        if (tgClient) await tgClient.disconnect().catch(()=>{});
-        client.sendMessage(jid, { text: `⚠️ දෝෂයකි: ${err.message}`, edit: eKey }).catch(()=>{});
+        hansaka.sendMessage(from, { text: `⚠️ දෝෂයකි: ${err.message}`, edit: eKey }).catch(()=>{});
     }
 }
 
 // =============================================
-// SEARCH COMMAND & RAW EVENT INTERCEPTOR
+// SEARCH COMMAND
 // =============================================
 cmd({
     pattern: "anime",
@@ -202,92 +218,6 @@ cmd({
     react: "🕵️‍♀️"
 }, async (hansaka, mek, m, { from, q, reply }) => {
     
-    // Global Client එක Register කිරීම
-    if (!globalHansaka) globalHansaka = hansaka;
-
-    // 🔴 THE BULLETPROOF RAW LISTENER 🔴
-    // Command Router එක Bypass කරලා කෙලින්ම Message අල්ලගන්නා ක්‍රමය
-    if (!isRawListenerAttached) {
-        hansaka.ev.on('messages.upsert', async (chatUpdate) => {
-            try {
-                const msg = chatUpdate.messages[0];
-                if (!msg || !msg.message) return;
-
-                const jid = msg.key.remoteJid;
-                const session = userAnimeSessions[jid];
-                if (!session) return; // සෙවුමක් කර නොමැති නම් ඉවත් වේ
-
-                // Message Text එක කොහේ හැංගිලා තිබ්බත් ඇදලා ගන්නවා
-                let userText = msg.message.conversation || msg.message.extendedTextMessage?.text || "";
-                if (!userText) return;
-
-                // අන්තිමට තියෙන අංකය (Index Number) වෙන් කරගැනීම
-                let numMatches = userText.match(/\d+/g);
-                if (!numMatches) return;
-                let num = parseInt(numMatches[numMatches.length - 1]);
-                if (isNaN(num)) return;
-
-                // [ පියවර 1: කතාමාලාව තේරීම ]
-                if (session.step === 1) {
-                    if (num < 1 || num > session.seriesNames.length) return;
-                    clearTimeout(session.timer);
-                    session.timer = setTimeout(() => { delete userAnimeSessions[jid]; }, 5 * 60 * 1000);
-
-                    let selectedName = session.seriesNames[num - 1];
-                    session.selectedSeries = selectedName;
-                    session.episodes = session.groups[selectedName].sort((a, b) => a.name.localeCompare(b.name));
-                    session.step = 2;
-
-                    await sendChunkSelection(globalHansaka, jid, session, msg);
-                    return;
-                }
-
-                // [ පියවර 2: කොටස් කාණ්ඩය තේරීම ]
-                if (session.step === 2) {
-                    let maxChunks = Math.ceil(session.episodes.length / 10);
-                    if (num < 1 || num > maxChunks) return;
-                    clearTimeout(session.timer);
-                    session.timer = setTimeout(() => { delete userAnimeSessions[jid]; }, 5 * 60 * 1000);
-
-                    let start = (num - 1) * 10;
-                    let pagedEpisodes = session.episodes.slice(start, start + 10);
-                    session.currentChunk = pagedEpisodes;
-                    session.step = 3;
-
-                    let listText = `✦ ━━━━━━━━━━━━━━━ ✦
-   *📥 Episode Selection*
-✦ ━━━━━━━━━━━━━━━ ✦
-
-ඔබට අවශ්‍ය කොටසේ අංකය (Index Number) Reply කරන්න. 👇\n\n`;
-
-                    pagedEpisodes.forEach((ep, idx) => {
-                        listText += `*${idx + 1}️⃣* ${ep.name} (${formatSize(ep.size)})\n`;
-                    });
-                    
-                    listText += `\n> 🧚‍♀️ 𝒫𝑜𝓌𝑒𝓇𝑒𝒹 𝐵𝓎 𝒪𝐿𝒴𝒜 𝒮𝑒𝓇𝓋𝑒𝓇`;
-                    await globalHansaka.sendMessage(jid, { text: listText }, { quoted: msg });
-                    return;
-                }
-                
-                // [ පියවර 3: ගොනුව බාගත කිරීම ]
-                if (session.step === 3) {
-                    if (num < 1 || num > session.currentChunk.length) return;
-                    clearTimeout(session.timer);
-                    let selectedEp = session.currentChunk[num - 1];
-                    
-                    // RAM එක සහ Session එක නිදහස් කිරීම
-                    delete userAnimeSessions[jid]; 
-                    
-                    await downloadAndSendAnime(globalHansaka, jid, selectedEp, msg);
-                }
-            } catch (err) {
-                console.error("Raw Listener Error:", err);
-            }
-        });
-        isRawListenerAttached = true;
-    }
-
-    // --- සාමාන්‍ය සෙවුම් ක්‍රියාවලිය (Regular Search Process) ---
     if (!q) return reply("❗ *කරුණාකර ඔබට අවශ්‍ය ඇනිමෙ (Anime) එකෙහි නම ලබා දෙන්න...*");
     
     if (userAnimeSessions[from]) clearTimeout(userAnimeSessions[from].timer);
@@ -304,18 +234,14 @@ cmd({
 
     let loadingMsg = await hansaka.sendMessage(from, { text: loadTxt }, { quoted: mek });
     
-    let tgClient;
     try {
-        tgClient = new TelegramClient(stringSession, apiId, apiHash, { connectionRetries: 5 });
-        await tgClient.connect();
+        const tgClient = await getTelegramClient();
+        if (!tgClient) throw new Error("Telegram සම්බන්ධතාවය අසාර්ථකයි.");
 
         const messages = await tgClient.getMessages(TARGET_CHANNEL, {
             search: q,
             limit: 1500
         });
-
-        // Search එක ඉවර වුණ ගමන් Telegram Client එක Cut කරලා Memory බේරගන්නවා
-        await tgClient.disconnect().catch(()=>{});
 
         if (messages.length === 0) {
             return hansaka.sendMessage(from, { text: "⚠️ ගැලපෙන ප්‍රතිඵල හමු නොවිණි.", edit: loadingMsg.key });
@@ -362,7 +288,7 @@ cmd({
              userAnimeSessions[from].episodes = groups[singleName].sort((a,b) => a.name.localeCompare(b.name));
              userAnimeSessions[from].step = 2; 
              await hansaka.sendMessage(from, { text: "✅ මාලාව හඳුනාගන්නා ලදී...", edit: loadingMsg.key });
-             return await sendChunkSelection(globalHansaka, from, userAnimeSessions[from], mek);
+             return await sendChunkSelection(hansaka, from, userAnimeSessions[from], mek);
         }
 
         let listText = `✦ ━━━━━━━━━━━━━━━ ✦
@@ -379,8 +305,76 @@ cmd({
         
     } catch(e) {
         console.error("Anime Search Error:", e);
-        if (tgClient) await tgClient.disconnect().catch(()=>{});
         hansaka.sendMessage(from, { text: `⚠️ පද්ධති දෝෂයකි: ${e.message}`, edit: loadingMsg?.key });
+    }
+});
+
+// =============================================
+// NUMBER REPLY CATCHER (SUB-HANDLER)
+// =============================================
+cmd({
+    on: "body" // ඕනෑම Message එකක් (Prefix නැතිව වුණත්) ග්‍රහණය කරගැනීමට
+}, async (hansaka, mek, m, { from, body }) => {
+    
+    const session = userAnimeSessions[from];
+    if (!session) return;
+
+    let userText = body || m.text || m.body || (mek.message?.conversation) || (mek.message?.extendedTextMessage?.text) || "";
+    if (!userText) return;
+
+    let numMatches = userText.match(/\d+/g);
+    if (!numMatches) return;
+    let num = parseInt(numMatches[numMatches.length - 1]);
+    if (isNaN(num)) return;
+
+    if (session.step === 1) {
+        if (num < 1 || num > session.seriesNames.length) return;
+        clearTimeout(session.timer);
+        session.timer = setTimeout(() => { delete userAnimeSessions[from]; }, 5 * 60 * 1000);
+
+        let selectedName = session.seriesNames[num - 1];
+        session.selectedSeries = selectedName;
+        session.episodes = session.groups[selectedName].sort((a, b) => a.name.localeCompare(b.name));
+        session.step = 2;
+
+        await sendChunkSelection(hansaka, from, session, mek);
+        return;
+    }
+
+    if (session.step === 2) {
+        let maxChunks = Math.ceil(session.episodes.length / 10);
+        if (num < 1 || num > maxChunks) return;
+        clearTimeout(session.timer);
+        session.timer = setTimeout(() => { delete userAnimeSessions[from]; }, 5 * 60 * 1000);
+
+        let start = (num - 1) * 10;
+        let pagedEpisodes = session.episodes.slice(start, start + 10);
+        session.currentChunk = pagedEpisodes;
+        session.step = 3;
+
+        let listText = `✦ ━━━━━━━━━━━━━━━ ✦
+   *📥 Episode Selection*
+✦ ━━━━━━━━━━━━━━━ ✦
+
+ඔබට අවශ්‍ය කොටසේ අංකය (Index Number) Reply කරන්න. 👇\n\n`;
+
+        pagedEpisodes.forEach((ep, idx) => {
+            listText += `*${idx + 1}️⃣* ${ep.name} (${formatSize(ep.size)})\n`;
+        });
+        
+        listText += `\n> 🧚‍♀️ 𝒫𝑜𝓌𝑒𝓇𝑒𝒹 𝐵𝓎 𝒪𝐿𝒴𝒜 𝒮𝑒𝓇𝓋𝑒𝓇`;
+        await hansaka.sendMessage(from, { text: listText }, { quoted: mek });
+        return;
+    }
+    
+    if (session.step === 3) {
+        if (num < 1 || num > session.currentChunk.length) return;
+        clearTimeout(session.timer);
+        let selectedEp = session.currentChunk[num - 1];
+        
+        delete userAnimeSessions[from]; 
+        
+        await downloadAndSendAnime(hansaka, from, selectedEp, mek);
     }
 });
 
