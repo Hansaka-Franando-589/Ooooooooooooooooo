@@ -28,58 +28,170 @@ const deleteMsg = async (hansaka, jid, key) => {
 // =============================================
 // ANIME STATE STORE (per user)
 // =============================================
-// step: "group_select" | "file_select"
-// groups: [{label, indices}]
-// allMessages: Telegram message array
-// selectedGroupMsgs: filtered messages for current group
-// selectedGroupLabel: name of selected group
-// filePage: current page index for sub-list (0-based)
 const animeState = {};
-
-const PAGE_SIZE = 15; // show 15 files per page
+const PAGE_SIZE = 15;
 
 // =============================================
-// POLLINATIONS AI HELPER
+// FILE NAME HELPERS
+// =============================================
+function getRawFileName(msg) {
+    if (msg.document && msg.document.attributes) {
+        const attr = msg.document.attributes.find(a => a.className === "DocumentAttributeFilename");
+        if (attr && attr.fileName) return attr.fileName;
+    }
+    // Do NOT fall back to msg.message - it can contain copyright content
+    return `Anime_File_${msg.id}`;
+}
+
+// Format bytes to human readable size
+function getFileSize(msg) {
+    try {
+        const bytes = msg.document && msg.document.size;
+        if (!bytes) return null;
+        if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(1) + ' GB';
+        if (bytes >= 1048576) return Math.round(bytes / 1048576) + ' MB';
+        return Math.round(bytes / 1024) + ' KB';
+    } catch (e) { return null; }
+}
+
+// Extract safe display info: episode number + quality + size (no full name = no copyright trigger)
+function getEpisodeDisplay(rawName, msg) {
+    // Episode number
+    const epMatch = rawName.match(/ep(?:isode)?[.\s_-]?(\d+)/i)
+        || rawName.match(/[\s._-](\d{2,4})[\s._-]/i);
+    const epNum = epMatch ? epMatch[1] : null;
+
+    // Quality
+    const qualMatch = rawName.match(/(\d{3,4}p)/i);
+    const quality = qualMatch ? qualMatch[1] : null;
+
+    // Extension
+    const extMatch = rawName.match(/\.([a-z0-9]{2,4})$/i);
+    const ext = extMatch ? extMatch[1].toUpperCase() : '';
+
+    // File size
+    const size = getFileSize(msg);
+
+    // Build safe display string
+    let parts = [];
+    if (epNum) parts.push(`Ep.${epNum}`);
+    else {
+        // No episode number - strip @mentions only, show short name
+        let safe = rawName.replace(/@[\w._-]+/g, '').trim();
+        safe = safe.replace(/\s{2,}/g, ' ').trim().substring(0, 35);
+        parts.push(safe || `File`);
+    }
+    if (quality) parts.push(quality);
+    else if (ext && ['MKV','MP4','AVI'].includes(ext)) parts.push(ext);
+    if (size) parts.push(size);
+
+    return parts.join(' | ');
+}
+
+// Keep for group label use
+function cleanDisplayName(rawName) {
+    let name = rawName
+        .replace(/@[\w._-]+/g, '')
+        .replace(/\[[^\]]{0,30}\]/g, '')
+        .replace(/\s{2,}/g, ' ').trim();
+    if (name.length > 60) name = name.substring(0, 57) + '...';
+    return name || rawName.substring(0, 50);
+}
+
+// =============================================
+// SMART LOCAL GROUPING (no AI needed)
+// Groups episodes into ranges, keeps others separately
+// =============================================
+function smartGroup(messages, fileNames) {
+    // Episode detection patterns
+    const epPattern = /(?:ep(?:isode)?s?|e)[.\s_-]?(\d+)(?!\d)|[.\s_-](\d{2,4})[.\s_-]/i;
+
+    const episodic = [];
+    const nonEpisodic = [];
+
+    messages.forEach((msg, i) => {
+        const name = fileNames[i];
+        const match = name.match(epPattern);
+        if (match) {
+            const epNum = parseInt(match[1] || match[2]);
+            episodic.push({ msg, idx: i, epNum, name });
+        } else {
+            nonEpisodic.push({ msg, idx: i, name });
+        }
+    });
+
+    // Sort episodes by number
+    episodic.sort((a, b) => a.epNum - b.epNum);
+
+    const groups = [];
+    const chunkSize = 50;
+
+    // Create episode range groups
+    for (let i = 0; i < episodic.length; i += chunkSize) {
+        const chunk = episodic.slice(i, i + chunkSize);
+        const epNums = chunk.map(f => f.epNum).filter(n => !isNaN(n)).sort((a, b) => a - b);
+        let label;
+        if (epNums.length > 1) {
+            label = `Episodes ${epNums[0]} - ${epNums[epNums.length - 1]}`;
+        } else if (epNums.length === 1) {
+            label = `Episode ${epNums[0]}`;
+        } else {
+            label = `Files ${i + 1} - ${i + chunk.length}`;
+        }
+        groups.push({ label, indices: chunk.map(f => f.idx) });
+    }
+
+    // Non-episodic: movies, OVAs, specials
+    if (nonEpisodic.length > 0) {
+        if (nonEpisodic.length <= 12) {
+            // Show each one separately with clean name
+            nonEpisodic.forEach(f => {
+                const clean = cleanDisplayName(f.name);
+                groups.push({ label: clean, indices: [f.idx] });
+            });
+        } else {
+            groups.push({
+                label: `Movies, OVAs & Others (${nonEpisodic.length})`,
+                indices: nonEpisodic.map(f => f.idx)
+            });
+        }
+    }
+
+    if (groups.length === 0) {
+        groups.push({ label: `All Results (${messages.length})`, indices: messages.map((_, i) => i) });
+    }
+
+    return groups;
+}
+
+// =============================================
+// POLLINATIONS AI - only for small result sets
 // =============================================
 function askPollinationsAI(prompt) {
     return new Promise((resolve, reject) => {
         const encodedPrompt = encodeURIComponent(prompt);
         const url = `https://text.pollinations.ai/${encodedPrompt}?model=openai&seed=42`;
-        https.get(url, (res) => {
+        const req = https.get(url, (res) => {
             let data = '';
             res.on('data', chunk => data += chunk);
             res.on('end', () => resolve(data.trim()));
-        }).on('error', reject);
+        });
+        req.on('error', reject);
+        req.setTimeout(8000, () => { req.destroy(); reject(new Error('timeout')); });
     });
 }
 
-// =============================================
-// GET FILE NAME FROM TELEGRAM MESSAGE
-// =============================================
-function getFileName(msg) {
-    if (msg.document && msg.document.attributes) {
-        const attr = msg.document.attributes.find(a => a.className === "DocumentAttributeFilename");
-        if (attr && attr.fileName) return attr.fileName;
-    }
-    return msg.message || `File_${msg.id}`;
-}
-
-// =============================================
-// AI GROUP ANALYZER
-// =============================================
 async function groupFilesWithAI(fileNames) {
-    const prompt = `You are an anime file organizer. Analyze these anime file names and group them.
+    const prompt = `Analyze these anime file names and group them logically.
+Rules:
+- Episodes: group into ranges of ~50 (e.g. "Naruto Episodes 1-50")
+- Movies/OVAs/Specials: show FULL clean file name (remove @tags)
+- Different series: separate groups
+- Return ONLY valid JSON array, no explanation.
+- Format: [{"label": "...", "indices": [0,1,2]}, ...]
 
-RULES:
-1. If files are episodes of the same anime series, group by episode ranges of ~50 each (e.g. "Naruto Episodes 1-50", "Naruto Episodes 51-100"). Do NOT list individual episodes.
-2. Files that are NOT episodes (Movies, OVAs, Specials, Trailers) → keep as a separate group with their FULL original file name as the label.
-3. If files belong to completely different anime series → group by series name.
-4. Keep group labels SHORT and CLEAR.
-5. Return ONLY a valid JSON array, no explanation, no markdown, no code fences.
-6. Format: [{"label": "Group Label Here", "indices": [0,1,2,3]}, ...]
-
-File list (index: name):
-${fileNames.map((n, i) => `${i}: ${n}`).join('\n')}`;
+Files:
+${fileNames.map((n, i) => `${i}: ${cleanDisplayName(n)}`).join('\n')}`;
 
     try {
         const response = await askPollinationsAI(prompt);
@@ -90,7 +202,6 @@ ${fileNames.map((n, i) => `${i}: ${n}`).join('\n')}`;
         }
         return null;
     } catch (e) {
-        console.error("AI grouping error:", e.message);
         return null;
     }
 }
@@ -99,33 +210,35 @@ ${fileNames.map((n, i) => `${i}: ${n}`).join('\n')}`;
 // FORMAT HELPERS
 // =============================================
 function buildGroupListText(groups, query, total) {
-    let text = `🔍 *"${query}"* සෙවීමෙන් *${total}* ගොනු ලැබුණා!\n\n`;
+    let text = `🔍 *"${query}"* - *${total}* ගොනු ලැබුණා!\n\n`;
     groups.forEach((g, i) => {
-        text += `${i + 1}. 📂 ${g.label} *(${g.indices.length} files)*\n`;
+        const count = g.indices.length;
+        const countStr = count > 1 ? ` *(${count})*` : '';
+        text += `${i + 1}. 📂 ${g.label}${countStr}\n`;
     });
     text += `\n💬 *Category number reply කරන්න*`;
     return formatMsg("🎬 Anime Search Results", text);
 }
 
-function buildSubListText(msgs, groupLabel, page) {
+function buildSubListText(msgs, fileNames, groupLabel, page) {
     const start = page * PAGE_SIZE;
     const end = Math.min(start + PAGE_SIZE, msgs.length);
-    const pageItems = msgs.slice(start, end);
     const totalPages = Math.ceil(msgs.length / PAGE_SIZE);
 
     let text = `📂 *${groupLabel}*\n`;
-    if (totalPages > 1) text += `_(Page ${page + 1}/${totalPages})_\n`;
+    if (totalPages > 1) text += `_(Page ${page + 1} / ${totalPages})_\n`;
     text += `\n`;
 
-    pageItems.forEach((msg, i) => {
-        const name = getFileName(msg);
-        text += `${start + i + 1}. 🎬 ${name}\n`;
-    });
+    for (let i = start; i < end; i++) {
+        // Safe display: episode number + quality + size (no copyrighted full titles)
+        const display = getEpisodeDisplay(fileNames[i], msgs[i]);
+        text += `${i + 1}. 🎬 ${display}\n`;
+    }
 
     text += `\n`;
-    if (page > 0) text += `⬅️ *p* → කලින් page\n`;
-    if (end < msgs.length) text += `➡️ *n* → ඊළඟ page\n`;
-    text += `🔙 *0* → category list වෙත`;
+    if (page > 0) text += `*p* ← කලින් page\n`;
+    if (end < msgs.length) text += `*n* → ඊළඟ page\n`;
+    text += `*0* → category list`;
     return formatMsg("📋 File List", text);
 }
 
@@ -136,7 +249,7 @@ async function searchAllMessages(client, query) {
     const allMessages = [];
     let offsetId = 0;
     const batchSize = 100;
-    const maxBatches = 5; // max 500 results
+    const maxBatches = 5;
 
     for (let i = 0; i < maxBatches; i++) {
         try {
@@ -146,17 +259,15 @@ async function searchAllMessages(client, query) {
                 offsetId: offsetId,
                 filter: new Api.InputMessagesFilterDocument()
             });
-
             if (!batch || batch.length === 0) break;
             allMessages.push(...batch);
             offsetId = batch[batch.length - 1].id;
-            if (batch.length < batchSize) break; // no more pages
+            if (batch.length < batchSize) break;
         } catch (e) {
             console.error("Batch fetch error:", e.message);
             break;
         }
     }
-
     return allMessages;
 }
 
@@ -170,7 +281,7 @@ cmd({
     category: "anime",
     react: "🎬"
 }, async (hansaka, mek, m, { q, reply }) => {
-    if (!q) return reply(formatMsg("Missing Input", "Please provide an anime name!\nExample: .anime Naruto"));
+    if (!q) return reply(formatMsg("Missing Input", "Anime නම ලබා දෙන්න!\nExample: .anime Naruto"));
 
     const jid = m.chat || mek.key.remoteJid;
     const senderJid = m.sender || mek.key.participant || jid;
@@ -178,30 +289,34 @@ cmd({
     let client;
 
     try {
-        loadingMsg = await hansaka.sendMessage(jid, { text: "Telegram දත්ත ගබඩාව සෙවෙමින් ..." });
+        loadingMsg = await hansaka.sendMessage(jid, { text: `🔍 "${q}" සොයමින්...` });
 
         client = new TelegramClient(stringSession, apiId, apiHash, { connectionRetries: 5 });
         await client.connect();
 
-        await hansaka.sendMessage(jid, { text: `🔍 *"${q}"* සෙවෙමින් පවතී (සියලු pages)...`, edit: loadingMsg.key });
-
-        // Paginated search - up to 500 results
         const messages = await searchAllMessages(client, q);
         await client.disconnect();
 
         if (!messages || messages.length === 0) {
             await deleteMsg(hansaka, jid, loadingMsg.key);
-            return reply(formatMsg("Not Found", `සමාවෙන්න, *"${q}"* Telegram චැනල් එකේ හොයාගන්න බැරි වුණා. 😔`));
+            return reply(formatMsg("Not Found", `"${q}" හොයාගන්න බැරි වුණා. 😔\nෙවනත් keyword එකක් try කරන්න.`));
         }
 
-        await hansaka.sendMessage(jid, { text: `✅ *${messages.length}* ගොනු ලැබුණා! AI ලෙස සකසමින්... 🤖`, edit: loadingMsg.key });
+        await hansaka.sendMessage(jid, {
+            text: `✅ *${messages.length}* ගොනු ලැබුණා! Groupings සකසමින්...`,
+            edit: loadingMsg.key
+        });
 
-        const fileNames = messages.map(msg => getFileName(msg));
-        let groups = await groupFilesWithAI(fileNames);
+        // Get raw file names (never use msg.message - copyright risk)
+        const rawFileNames = messages.map(msg => getRawFileName(msg));
 
-        // Fallback if AI fails
-        if (!groups || groups.length === 0) {
-            groups = [{ label: `All Results`, indices: messages.map((_, i) => i) }];
+        // Smart local grouping (reliable, no API)
+        let groups = smartGroup(messages, rawFileNames);
+
+        // If result set is small, optionally try AI for better labels
+        if (messages.length <= 50) {
+            const aiGroups = await groupFilesWithAI(rawFileNames);
+            if (aiGroups && aiGroups.length > 0) groups = aiGroups;
         }
 
         // Save state
@@ -209,13 +324,15 @@ cmd({
             step: "group_select",
             groups,
             allMessages: messages,
+            rawFileNames,
             searchQuery: q,
             jid
         };
 
         await deleteMsg(hansaka, jid, loadingMsg.key);
-        const listText = buildGroupListText(groups, q, messages.length);
-        await hansaka.sendMessage(jid, { text: listText }, { quoted: mek });
+        await hansaka.sendMessage(jid, {
+            text: buildGroupListText(groups, q, messages.length)
+        }, { quoted: mek });
 
     } catch (e) {
         console.error("Anime Command Error:", e);
@@ -230,15 +347,14 @@ cmd({
 // =============================================
 cmd({
     pattern: undefined,
-    filter: (mek, { sender }) => {
-        return animeState[sender] !== undefined;
-    }
-}, async (hansaka, mek, m, { reply, sender, senderNumber }) => {
+    filter: (mek, { sender }) => animeState[sender] !== undefined
+}, async (hansaka, mek, m, { reply, sender, body }) => {
     const state = animeState[sender];
     if (!state) return;
 
     const jid = state.jid || m.chat || mek.key.remoteJid;
-    const rawInput = (mek.message?.conversation || mek.message?.extendedTextMessage?.text || "").trim().toLowerCase();
+    // Use body from index.js (already extracted & processed)
+    const rawInput = (body || "").trim().toLowerCase();
 
     // ---- STEP 1: GROUP SELECT ----
     if (state.step === "group_select") {
@@ -249,85 +365,103 @@ cmd({
 
         const selectedGroup = state.groups[num - 1];
         const groupMsgs = selectedGroup.indices.map(i => state.allMessages[i]);
+        const groupNames = selectedGroup.indices.map(i => state.rawFileNames[i]);
 
         state.step = "file_select";
         state.selectedGroupMsgs = groupMsgs;
+        state.selectedGroupNames = groupNames;
         state.selectedGroupLabel = selectedGroup.label;
         state.filePage = 0;
 
-        const subListText = buildSubListText(groupMsgs, selectedGroup.label, 0);
-        await hansaka.sendMessage(jid, { text: subListText }, { quoted: mek });
+        await hansaka.sendMessage(jid, {
+            text: buildSubListText(groupMsgs, groupNames, selectedGroup.label, 0)
+        }, { quoted: mek });
         return;
     }
 
     // ---- STEP 2: FILE SELECT ----
     if (state.step === "file_select") {
         const msgs = state.selectedGroupMsgs;
+        const names = state.selectedGroupNames;
         const totalPages = Math.ceil(msgs.length / PAGE_SIZE);
 
-        // Navigation: next page
         if (rawInput === 'n') {
             if (state.filePage + 1 >= totalPages) return reply("ඊළඟ page නෑ.");
             state.filePage++;
-            return await hansaka.sendMessage(jid, { text: buildSubListText(msgs, state.selectedGroupLabel, state.filePage) }, { quoted: mek });
+            return await hansaka.sendMessage(jid, {
+                text: buildSubListText(msgs, names, state.selectedGroupLabel, state.filePage)
+            }, { quoted: mek });
         }
 
-        // Navigation: previous page
         if (rawInput === 'p') {
             if (state.filePage <= 0) return reply("කලින් page නෑ.");
             state.filePage--;
-            return await hansaka.sendMessage(jid, { text: buildSubListText(msgs, state.selectedGroupLabel, state.filePage) }, { quoted: mek });
+            return await hansaka.sendMessage(jid, {
+                text: buildSubListText(msgs, names, state.selectedGroupLabel, state.filePage)
+            }, { quoted: mek });
         }
 
-        // Go back to group list
         if (rawInput === '0') {
             state.step = "group_select";
             delete state.selectedGroupMsgs;
+            delete state.selectedGroupNames;
             delete state.selectedGroupLabel;
             delete state.filePage;
-            const listText = buildGroupListText(state.groups, state.searchQuery, state.allMessages.length);
-            return await hansaka.sendMessage(jid, { text: listText }, { quoted: mek });
+            return await hansaka.sendMessage(jid, {
+                text: buildGroupListText(state.groups, state.searchQuery, state.allMessages.length)
+            }, { quoted: mek });
         }
 
         const num = parseInt(rawInput);
         if (isNaN(num) || num < 1 || num > msgs.length) {
-            return reply(formatMsg("Invalid Input", `1 සිට ${msgs.length} අතර number reply කරන්න.\n*n* = ඊළඟ page | *p* = කලින් page | *0* = ආපහු`));
+            return reply(formatMsg("Invalid Input",
+                `1 සිට ${msgs.length} අතර number reply කරන්න.\n*n* = ඊළඟ | *p* = කලින් | *0* = ආපහු`
+            ));
         }
 
         const selectedMsg = msgs[num - 1];
-        const fileName = getFileName(selectedMsg);
+        const rawName = names[num - 1];
 
-        // Remove state immediately
+        // Clear state before download
         delete animeState[sender];
 
         let loadingMsg;
         let client;
         try {
-            loadingMsg = await hansaka.sendMessage(jid, { text: `⏳ *${fileName}*\nDownload වෙමින් පවතී...` }, { quoted: mek });
+            const cleanName = cleanDisplayName(rawName);
+            loadingMsg = await hansaka.sendMessage(jid, {
+                text: `⏳ Download වෙමින්...\n📄 ${cleanName}`
+            }, { quoted: mek });
 
             client = new TelegramClient(stringSession, apiId, apiHash, { connectionRetries: 5 });
             await client.connect();
 
-            const parts = fileName.split('.');
-            const extension = '.' + parts.pop();
-            const originalName = parts.join('.');
-            const newFileName = `${originalName}-BY OLYA${extension}`;
+            const parts = rawName.split('.');
+            const ext = '.' + parts.pop();
+            const baseName = parts.join('.');
+            const newFileName = `${baseName}-BY OLYA${ext}`;
 
             const tempDir = path.join(__dirname, '../temp');
             if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
             const tempFilePath = path.join(tempDir, newFileName);
 
-            await hansaka.sendMessage(jid, { text: "🚀 WhatsApp එකට Upload කරමින්...", edit: loadingMsg.key });
+            await hansaka.sendMessage(jid, { text: "🚀 WhatsApp Upload කරමින්...", edit: loadingMsg.key });
 
             const buffer = await client.downloadMedia(selectedMsg, {});
             fs.writeFileSync(tempFilePath, buffer);
             await client.disconnect();
 
+            const mimetype = ext.toLowerCase().includes('mkv')
+                ? 'video/x-matroska'
+                : 'video/mp4';
+
             await hansaka.sendMessage(jid, {
                 document: fs.readFileSync(tempFilePath),
-                mimetype: extension.includes('mkv') ? 'video/x-matroska' : 'video/mp4',
+                mimetype,
                 fileName: newFileName,
-                caption: formatMsg("✅ Download Complete", `🎬 *${originalName}*\n📥 Powered by Olya & Telegram`)
+                caption: formatMsg("✅ Download Complete",
+                    `🎬 *${cleanName}*\n📥 Olya x Telegram`
+                )
             }, { quoted: mek });
 
             fs.unlinkSync(tempFilePath);
@@ -339,7 +473,6 @@ cmd({
             await deleteMsg(hansaka, jid, loadingMsg?.key);
             reply(formatMsg("Download Error", `Error: ${e.message}`));
         }
-        return;
     }
 });
 
