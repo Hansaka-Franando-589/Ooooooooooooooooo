@@ -53,15 +53,19 @@ const sendChunkSelection = async (hansaka, from, session, mek) => {
 };
 
 // =============================================
-// MEMORY-SAFE DOWNLOAD FUNCTION
+// MEMORY-SAFE DOWNLOAD FUNCTION (Stateless)
 // =============================================
-async function downloadAndSendAnime(hansaka, from, selectedEp, client, mek) {
+async function downloadAndSendAnime(hansaka, from, selectedEp, mek) {
     let progMsg = await hansaka.sendMessage(from, { text: "✦ ━━━━━━━━━━━━━━ ✦\n📶 *Connecting to Datacenter...*\n✦ ━━━━━━━━━━━━━━ ✦\n\nඕල්යා පද්ධතිය ගොනුව බාගත කිරීම සඳහා සූදානම් වෙමින් පවතී..." }, { quoted: mek });
     const eKey = progMsg.key;
     
+    let client;
     let tempFilePath;
     try {
-        // Fetch the specific message using the ID we saved (Client is already connected)
+        // අලුතින්ම සම්බන්ද වී ෆයිල් එක විතරක් ගෙනීම 
+        client = new TelegramClient(stringSession, apiId, apiHash, { connectionRetries: 5 });
+        await client.connect();
+
         const msgs = await client.getMessages(TARGET_CHANNEL, { ids: [selectedEp.msgId] });
         if (!msgs || msgs.length === 0 || !msgs[0]) {
             await client.disconnect();
@@ -82,7 +86,7 @@ async function downloadAndSendAnime(hansaka, from, selectedEp, client, mek) {
 
 [⚙️] පද්ධති විශ්ලේෂණය (System Analysis):
 ───────────────────────────
-මෙය ඕල්යා පද්ධතිය හරහා ජනනය කරන ලද පණිවිඩයකි. OOM සීමාවන් බිඳ දමමින් මෙම ගොනුව සාර්ථකව උඩුගත කරන ලදී.
+මෙය ඕල්යා කෘත්‍රිම බුද්ධි පද්ධතිය හරහා ජනනය කරන ලද ස්වයංක්‍රීය පණිවිඩයකි. OOM (Out-of-Memory) සීමාවන් බිඳ දමමින් මෙම ගොනුව සාර්ථකව උඩුගත කරන ලදී.
 
 [📁] ගොනු තොරතුරු (File Specifications):
 ───────────────────────────
@@ -132,7 +136,7 @@ async function downloadAndSendAnime(hansaka, from, selectedEp, client, mek) {
      *📥 Storage Stream Status*
 ✦ ━━━━━━━━━━━━━━━ ✦
 
-Memory බාධාවකින් තොරව ඔබගේ ගොනුව ලබා ගනිමින් පවතී...
+OOM Memory බාධාවකින් තොරව ගොනුව ලබා ගනිමින් පවතී...
 ${barStr} ${pct}%
 
 ⚡ වේගය: ${speedStr}
@@ -146,7 +150,10 @@ ${barStr} ${pct}%
         fileWriter.end();
         await new Promise((resolve) => fileWriter.once('finish', resolve));
 
-        await hansaka.sendMessage(from, { text: "✦ ━━━━━━━━━━━━ ✦\n✅ ගොනුව සාර්ථකව තැටියට ලියවා ඇත. උඩුගත කිරීම (Upload) ආරම්භ වේ...\n✦ ━━━━━━━━━━━━ ✦", edit: eKey }).catch(()=>{});
+        // ඩවුන්ලෝඩ් එක ඉවර වුන ගමන්ම Telegram Session එක කට් කිරීම (To save Baileys memory)
+        await client.disconnect().catch(()=>{});
+
+        await hansaka.sendMessage(from, { text: "✦ ━━━━━━━━━━━━ ✦\n✅ ගොනුව සුරක්ෂිතව තැටියට ලියවා ඇත. උඩුගත කිරීම (Upload) ආරම්භ වේ...\n✦ ━━━━━━━━━━━━ ✦", edit: eKey }).catch(()=>{});
 
         let sendObj = {
             document: { url: tempFilePath },
@@ -168,15 +175,12 @@ ${barStr} ${pct}%
 
         await hansaka.sendMessage(from, sendObj, { quoted: mek });
         if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-        
-        // Disconnect safely ONLY after everything is fully done
-        await client.disconnect();
         try { await hansaka.sendMessage(from, { delete: eKey }); } catch(err){}
 
     } catch(err) {
         console.error("Download Error:", err);
         if (tempFilePath && fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
-        if (client) await client.disconnect();
+        if (client) await client.disconnect().catch(()=>{});
         hansaka.sendMessage(from, { text: `⚠️ දෝෂයකි: ${err.message}`, edit: eKey }).catch(()=>{});
     }
 }
@@ -198,10 +202,7 @@ cmd({
 }, async (hansaka, mek, m, { from, q, reply }) => {
     if (!q) return reply("❗ *කරුණාකර ඔබට අවශ්‍ය ඇනිමෙ (Anime) එකෙහි නම ලබා දෙන්න...*");
     
-    if (userAnimeSessions[from]) {
-        if(userAnimeSessions[from].client) await userAnimeSessions[from].client.disconnect().catch(()=>{});
-        clearTimeout(userAnimeSessions[from].timer);
-    }
+    if (userAnimeSessions[from]) clearTimeout(userAnimeSessions[from].timer);
 
     let uName = m.pushName || "පරිශීලක";
     let loadTxt = `✦ ━━━━━━━━━━━━━━━ ✦
@@ -225,8 +226,10 @@ cmd({
             limit: 1500
         });
 
+        // Search කරපු ගමන් Client එක Disconnect කරලා දානවා! (Very Important)
+        await client.disconnect().catch(()=>{});
+
         if (messages.length === 0) {
-            await client.disconnect();
             return hansaka.sendMessage(from, { text: "⚠️ ගැලපෙන ප්‍රතිඵල හමු නොවිණි.", edit: loadingMsg.key });
         }
 
@@ -246,7 +249,6 @@ cmd({
         });
 
         if (episodes.length === 0) {
-            await client.disconnect();
             return hansaka.sendMessage(from, { text: "⚠️ වලංගු වීඩියෝ ගොනු කිසිවක් හමු නොවීය.", edit: loadingMsg.key });
         }
 
@@ -259,19 +261,12 @@ cmd({
 
         let seriesNames = Object.keys(groups);
 
-        // We save the 'client' in the session to keep it alive and prevent TIMEOUT crashes
         userAnimeSessions[from] = {
             step: 1,
             groups,
             seriesNames,
-            client, 
             loadingKey: loadingMsg.key,
-            timer: setTimeout(async () => { 
-                if(userAnimeSessions[from] && userAnimeSessions[from].client) {
-                    await userAnimeSessions[from].client.disconnect().catch(()=>{});
-                }
-                delete userAnimeSessions[from]; 
-            }, 5 * 60 * 1000)
+            timer: setTimeout(() => { delete userAnimeSessions[from]; }, 5 * 60 * 1000)
         };
 
         if (seriesNames.length === 1) {
@@ -303,21 +298,24 @@ cmd({
 });
 
 // =============================================
-// SUB-HANDLER FOR ANIMEDL SESSION (THE BULLETPROOF EXTRACTOR)
+// SUB-HANDLER (ඔයාගේ Original 'Filter' ක්‍රමය!)
 // =============================================
 cmd({
-    on: "body" // Global listener to catch ANY text format (Quotes, forwards, raw text)
-}, async (hansaka, mek, m, { from, body }) => {
+    filter: (text, ex) => {
+        let from = ex && ex.message && ex.message.key ? ex.message.key.remoteJid : null;
+        return from ? !!userAnimeSessions[from] : false;
+    },
+    dontAddCommandList: true,
+    filename: __filename
+}, async (hansaka, mek, m, { from, body, reply }) => {
     
-    // Check if a session exists for this user
     const session = userAnimeSessions[from];
     if (!session) return;
 
-    // The Bulletproof Text Extractor: Pulls text from anywhere in the message object
+    // ඔයා කිව්ව විදිහට කොහෙන් හරි අංකය ඇදලා ගන්න පුළුවන් කෑල්ල
     let userText = body || m.text || m.body || (mek.message?.conversation) || (mek.message?.extendedTextMessage?.text) || "";
     if (!userText) return;
 
-    // Pull out the last number from the text
     let numMatches = userText.match(/\d+/g);
     if (!numMatches) return;
     let num = parseInt(numMatches[numMatches.length - 1]);
@@ -327,10 +325,7 @@ cmd({
         if (num < 1 || num > session.seriesNames.length) return;
         
         clearTimeout(session.timer);
-        session.timer = setTimeout(async () => { 
-            if(session.client) await session.client.disconnect().catch(()=>{});
-            delete userAnimeSessions[from]; 
-        }, 5 * 60 * 1000);
+        session.timer = setTimeout(() => { delete userAnimeSessions[from]; }, 5 * 60 * 1000);
 
         let selectedName = session.seriesNames[num - 1];
         session.selectedSeries = selectedName;
@@ -346,10 +341,7 @@ cmd({
         if (num < 1 || num > maxChunks) return;
 
         clearTimeout(session.timer);
-        session.timer = setTimeout(async () => { 
-            if(session.client) await session.client.disconnect().catch(()=>{});
-            delete userAnimeSessions[from]; 
-        }, 5 * 60 * 1000);
+        session.timer = setTimeout(() => { delete userAnimeSessions[from]; }, 5 * 60 * 1000);
 
         let start = (num - 1) * 10;
         let pagedEpisodes = session.episodes.slice(start, start + 10);
@@ -376,13 +368,12 @@ cmd({
         
         clearTimeout(session.timer);
         let selectedEp = session.currentChunk[num - 1];
-        let persistentClient = session.client;
         
         // පද්ධතියේ ආරක්ෂාවට Session එක ඉවත් කිරීම
         delete userAnimeSessions[from]; 
         
         // ඩවුන්ලෝඩ් එක පටන් ගැනීම
-        await downloadAndSendAnime(hansaka, from, selectedEp, persistentClient, mek);
+        await downloadAndSendAnime(hansaka, from, selectedEp, mek);
     }
 });
 
