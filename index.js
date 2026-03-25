@@ -405,6 +405,27 @@ async function connectToWA() {
         }
     } 
 
+    // =============================================
+    // REPLY HANDLERS - run FIRST before AI/cmd
+    // to intercept state-based flows (e.g. anime)
+    // =============================================
+    const replyText = body;
+    let handledByReplyHandler = false;
+    for (const handler of replyHandlers) {
+      try {
+        if (handler.filter(mek, { sender, message: mek })) {
+          await handler.function(hansaka, mek, m, {
+            from, quoted: mek, body: replyText, sender, senderNumber, reply,
+          });
+          handledByReplyHandler = true;
+          break;
+        }
+      } catch (e) {
+        console.log("Reply handler error:", e);
+      }
+    }
+    if (handledByReplyHandler) return;
+
     let isAiTrigger = !isCmd && !isSelection && body.trim().length > 0;
     
     // --- AUTO LINK DOWNLOADER INTERCEPTOR ---
@@ -508,20 +529,7 @@ async function connectToWA() {
       }
     }
 
-    const replyText = body;
-
-    for (const handler of replyHandlers) {
-      if (handler.filter(replyText, { sender, message: mek })) {
-        try {
-          await handler.function(hansaka, mek, m, {
-            from, quoted: mek, body: replyText, sender, reply,
-          });
-          break;
-        } catch (e) {
-          console.log("Reply handler error:", e);
-        }
-      }
-    }
+    // Reply handlers already ran above (before AI/cmd processing)
 
     // Old user welcome logic removed, replaced by Olya AI Registration above.
   });
